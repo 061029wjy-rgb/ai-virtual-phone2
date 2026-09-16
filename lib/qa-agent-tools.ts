@@ -1,3 +1,4 @@
+import { fetchLlmPayload } from "./llm-http";
 import { buildProviderRequest, parseProviderResponse } from "./llm-provider-adapter";
 import { loadApiConfigs } from "./settings-storage";
 import type { ApiConfig } from "./settings-types";
@@ -122,12 +123,7 @@ async function pingApiConfig(config: ApiConfig, signal?: AbortSignal): Promise<s
     signal?.addEventListener("abort", onOuterAbort);
     try {
         const request = buildProviderRequest(config, null, [{ role: "user", content: "连通性测试，只回复：ok" }]);
-        const response = await fetch(request.url, {
-            method: "POST",
-            headers: request.headers,
-            body: JSON.stringify(request.body),
-            signal: abort.signal,
-        });
+        const response = await fetchLlmPayload(request, { signal: abort.signal });
         const ms = Date.now() - started;
         if (!response.ok) {
             const bodyText = (await response.text()).slice(0, 300);

@@ -150,4 +150,78 @@ await test('模型转发拒绝非授权地址和跨站请求，并保留流式�
         assert.equal(await response.text(), 'data: {"ok":true}\n\n');
     } finally { globalThis.fetch = original; }
 });
+const { generateKeyPairSync, verify } = await import('node:crypto');
+const { sendVertexRequest, vertexAccessToken } = await import('../lib/vertex-server.ts');
+const { fetchLlmPayload } = await import('../lib/llm-http.ts');
+const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const serviceAccount = { type: 'service_account', project_id: 'test-project', client_email: 'test@test-project.iam.gserviceaccount.com', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }), token_uri: 'https://untrusted.invalid/token' };
+const vertexConfig = { id: 'test-vertex', provider: 'VertexAI', protocol: 'vertex', apiKey: '', defaultModel: 'gemini-test', enableImageRecognition: true, enableImageGeneration: false, vertexServiceAccount: JSON.stringify(serviceAccount) };
+await test('Vertex 完整模式快照无私钥；传输阶段注入凭据；Gemini 系统消息、工具、流式协议复用', async () => {
+    const request = buildProviderRequest(vertexConfig, null, [{ role: 'system', content: 'phone system' }, { role: 'user', content: 'hello' }], { stream: true, tools: [{ name: 'phone', description: 'test', parameters: { type: 'object', properties: {} } }] });
+    assert.equal(request.providerKind, 'gemini'); assert.match(request.url, /stream=true/);
+    assert.equal(request.body.systemInstruction.parts[0].text, 'phone system');
+    assert.equal(request.body.tools[0].functionDeclarations[0].name, 'phone');
+    assert.ok(!JSON.stringify(request).includes('PRIVATE KEY')); assert.ok(!JSON.stringify(request).includes('client_email'));
+    const saved = globalThis.fetch;
+    try {
+        globalThis.fetch = async (url, init) => {
+            assert.ok(String(url).startsWith('/api/vertex?'));
+            const envelope = JSON.parse(init.body);
+            assert.equal(envelope.serviceAccount.client_email, serviceAccount.client_email);
+            assert.equal(envelope.serviceAccount.token_uri, undefined);
+            assert.ok(envelope.request.contents.length);
+            return Response.json({ candidates: [{ content: { parts: [{ text: 'ok' }] } }] });
+        };
+        await fetchLlmPayload(request);
+        const result = await simpleLLMCall(vertexConfig, [{ role: 'system', content: 'phone system' }, { role: 'user', content: 'hi' }]);
+        assert.equal(result.content, 'ok');
+    } finally { globalThis.fetch = saved; }
+});
+await test('Vertex RS256 签名、固定 OAuth 目标、令牌缓存及区域流式地址', async () => {
+    let oauthCalls = 0;
+    const fetcher = async (url, init) => {
+        if (url === 'https://oauth2.googleapis.com/token') {
+            oauthCalls++;
+            const jwt = init.body.get('assertion'); const [header, payload, signature] = jwt.split('.');
+            assert.equal(JSON.parse(Buffer.from(header, 'base64url')).alg, 'RS256');
+            const claims = JSON.parse(Buffer.from(payload, 'base64url'));
+            assert.equal(claims.aud, url); assert.equal(claims.iss, serviceAccount.client_email);
+            assert.equal(claims.exp - claims.iat, 3600);
+            assert.ok(verify('RSA-SHA256', Buffer.from(header + '.' + payload), publicKey, Buffer.from(signature, 'base64url')));
+            return Response.json({ access_token: 'fake-token', expires_in: 3600 });
+        }
+        assert.equal(url, 'https://us-central1-aiplatform.googleapis.com/v1/projects/test-project/locations/us-central1/publishers/google/models/gemini-test:streamGenerateContent?alt=sse');
+        assert.equal(init.headers.Authorization, 'Bearer fake-token');
+        assert.equal(init.redirect, 'error');
+        return new Response('data: {"candidates":[]}\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+    };
+    const query = new URLSearchParams({ mode: 'full', project: 'test-project', location: 'us-central1', model: 'gemini-test', stream: 'true' });
+    for (let i = 0; i < 2; i++) {
+        const res = await sendVertexRequest(query, { serviceAccount, request: { contents: [] } }, new AbortController().signal, fetcher);
+        assert.equal(res.headers.get('content-type'), 'text/event-stream'); assert.match(await res.text(), /candidates/);
+    }
+    assert.equal(oauthCalls, 1);
+    const savedNow = Date.now;
+    try { Date.now = () => savedNow() + 3600000; await vertexAccessToken(serviceAccount, new AbortController().signal, fetcher); }
+    finally { Date.now = savedNow; }
+    assert.equal(oauthCalls, 2);
+});
+await test('Vertex 全局地址、Express Key、参数拦截和失败信息不泄露私钥', async () => {
+    const query = new URLSearchParams({ mode: 'express', location: 'global', model: 'gemini-test' });
+    const response = await sendVertexRequest(query, { apiKey: 'fake key', request: {} }, new AbortController().signal, async (url, init) => {
+        assert.equal(new URL(url).hostname, 'aiplatform.googleapis.com');
+        assert.equal(new URL(url).pathname, '/v1/publishers/google/models/gemini-test:generateContent');
+        assert.equal(new URL(url).searchParams.get('key'), 'fake key');
+        assert.equal(init.headers.Authorization, undefined); return Response.json({ ok: true });
+    });
+    assert.equal(response.status, 200);
+    query.set('location', 'evil.invalid/');
+    await assert.rejects(sendVertexRequest(query, { request: {} }, new AbortController().signal), /格式/);
+    const bad = { ...serviceAccount, client_email: 'bad@example.com' };
+    await assert.rejects(vertexAccessToken(bad, new AbortController().signal, async () => Response.json({ error: serviceAccount.private_key }, { status: 400 })), e => e.status === 401 && !e.message.includes('PRIVATE KEY'));
+    const { POST } = await import('../app/api/vertex/route.ts');
+    const denied = await POST(new Request('https://phone.test/api/vertex', { method: 'POST', headers: { origin: 'https://other.test' }, body: '{}' }));
+    assert.equal(denied.status, 403);
+});
+
 console.log(`\n${passed} compatibility checks passed (mock APIs; no paid requests).`);

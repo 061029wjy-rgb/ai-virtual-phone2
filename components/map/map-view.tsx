@@ -1,4 +1,5 @@
 "use client";
+import { hasModelCredentials } from "@/lib/api-helpers";
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { ArrowLeft, BookOpen, LogOut, Bug, Map as MapIcon, MessageCircle, Save, Send, Palette, MoreHorizontal, X } from "lucide-react";
 import type { MapWorld, GameSave, NodeInteraction, EventScene, EventChoice, StreamMessage, Declaration } from "@/lib/map-types";
@@ -403,8 +404,8 @@ export default function MapView({ world, save, onSaveUpdate, onBack }: Props) {
       const dmSlot = save.agents.length === 1
         ? resolveBinding(bindings, save.agents[0].characterId, "adventure")
         : resolveBinding(bindings, undefined, "adventure");
-      const apiConfig = (dmSlot?.apiConfigId ? apiConfigs.find(c => c.id === dmSlot.apiConfigId) : null) || apiConfigs.find(c => c.apiKey) || apiConfigs[0];
-      if (!apiConfig?.apiKey) throw new Error("未找到有效的API配置，请先在设置中配置API");
+      const apiConfig = (dmSlot?.apiConfigId ? apiConfigs.find(c => c.id === dmSlot.apiConfigId) : null) || apiConfigs.find(hasModelCredentials) || apiConfigs[0];
+      if (!hasModelCredentials(apiConfig)) throw new Error("未找到有效的API配置，请先在设置中配置API");
 
       const companionIds = save.agents
         .filter(a => a.currentNodeId === save.currentNodeId)
@@ -552,8 +553,8 @@ export default function MapView({ world, save, onSaveUpdate, onBack }: Props) {
       const dmSlot = save.agents.length === 1
         ? resolveBinding(bindings, save.agents[0].characterId, "adventure")
         : resolveBinding(bindings, undefined, "adventure");
-      const apiConfig = (dmSlot?.apiConfigId ? apiConfigs.find(c => c.id === dmSlot.apiConfigId) : null) || apiConfigs.find(c => c.apiKey) || apiConfigs[0];
-      if (!apiConfig?.apiKey) throw new Error("未找到有效的API配置");
+      const apiConfig = (dmSlot?.apiConfigId ? apiConfigs.find(c => c.id === dmSlot.apiConfigId) : null) || apiConfigs.find(hasModelCredentials) || apiConfigs[0];
+      if (!hasModelCredentials(apiConfig)) throw new Error("未找到有效的API配置");
 
       // ── Phase 3: Companions declare — detect already-replied from stream ──
       const companionIds = save.agents.map(a => a.characterId);
@@ -955,7 +956,7 @@ export default function MapView({ world, save, onSaveUpdate, onBack }: Props) {
       const bindings = loadBindingConfig();
       const firstCharId = save.agents[0]?.characterId || characters[0]?.id || "";
       const slot = firstCharId ? resolveBinding(bindings, firstCharId, "adventure") : null;
-      const apiConfig = (slot?.apiConfigId ? apiConfigs.find(c => c.id === slot.apiConfigId) : null) || apiConfigs.find(c => c.apiKey) || apiConfigs[0];
+      const apiConfig = (slot?.apiConfigId ? apiConfigs.find(c => c.id === slot.apiConfigId) : null) || apiConfigs.find(hasModelCredentials) || apiConfigs[0];
 
       if (apiConfig?.apiKey) {
         const companionIds = save.agents.map(a => a.characterId);
@@ -1148,8 +1149,8 @@ export default function MapView({ world, save, onSaveUpdate, onBack }: Props) {
       const apiConfigs = loadApiConfigs();
       const bindings = loadBindingConfig();
       const slot = resolveBinding(bindings, characterId, "adventure");
-      const apiConfig = (slot?.apiConfigId ? apiConfigs.find(c => c.id === slot.apiConfigId) : null) || apiConfigs.find(c => c.apiKey) || apiConfigs[0];
-      if (!apiConfig?.apiKey) throw new Error("未找到API配置");
+      const apiConfig = (slot?.apiConfigId ? apiConfigs.find(c => c.id === slot.apiConfigId) : null) || apiConfigs.find(hasModelCredentials) || apiConfigs[0];
+      if (!hasModelCredentials(apiConfig)) throw new Error("未找到API配置");
 
       const decl = await companionDeclare(characterId, apiConfig, streamRef.current, save.agents.length > 1 ? userIdentity : undefined, save.agents.find(a => a.characterId === characterId)?.affinity);
 
@@ -1179,8 +1180,8 @@ export default function MapView({ world, save, onSaveUpdate, onBack }: Props) {
       const dmSlot = save.agents.length === 1
         ? resolveBinding(bindings, save.agents[0].characterId, "adventure")
         : resolveBinding(bindings, undefined, "adventure");
-      const apiConfig = (dmSlot?.apiConfigId ? apiConfigs.find(c => c.id === dmSlot.apiConfigId) : null) || apiConfigs.find(c => c.apiKey) || apiConfigs[0];
-      if (!apiConfig?.apiKey) throw new Error("未找到有效的API配置");
+      const apiConfig = (dmSlot?.apiConfigId ? apiConfigs.find(c => c.id === dmSlot.apiConfigId) : null) || apiConfigs.find(hasModelCredentials) || apiConfigs[0];
+      if (!hasModelCredentials(apiConfig)) throw new Error("未找到有效的API配置");
 
       const playerName = userIdentity?.name || "你";
 
@@ -2499,7 +2500,7 @@ export default function MapView({ world, save, onSaveUpdate, onBack }: Props) {
                 <div style={{ fontSize: "calc(10px*var(--app-text-scale,1))", color: "var(--c-adv-text-muted)", marginTop: 14, marginBottom: 8, fontFamily: "monospace", letterSpacing: "0.1em" }}>冒险总结</div>
                 <button onClick={async () => {
                   const apiConfig = resolveAuxiliaryApiConfig("memorySummaryApiConfigId") || loadApiConfigs().find(c => c.apiKey);
-                  if (!apiConfig?.apiKey) return;
+                  if (!hasModelCredentials(apiConfig)) return;
                   pushMessages({ id: mkId(), type: "system", text: "正在总结冒险经历..." });
                   try {
                     await generateAdventureSummary(save, skeleton.world.name, apiConfig);

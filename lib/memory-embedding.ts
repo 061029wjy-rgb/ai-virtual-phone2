@@ -1,3 +1,4 @@
+import { isVertexConfig } from "./vertex-config";
 // lib/memory-embedding.ts
 // Embedding generation + vector/keyword search for memory retrieval.
 
@@ -49,6 +50,7 @@ export async function generateEmbedding(
 
     const embeddingModel = resolveEmbeddingModel(apiConfig);
     if (!embeddingModel) return fail("该配置无可用向量模型（默认模型名不像向量模型，服务商也无内置映射）");
+    if (isVertexConfig(apiConfig)) return fail("Vertex 配置用于 Gemini 对话，请另配兼容接口用于向量记忆");
     if (!apiConfig.apiKey.trim() && apiConfig.authMode !== "none") return fail("缺少 API Key");
 
     const baseUrl = determineBaseUrl(apiConfig);

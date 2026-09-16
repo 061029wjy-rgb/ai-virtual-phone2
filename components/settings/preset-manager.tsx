@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useContext, useCallback, useMemo } from "react";
-import { Plus, Upload, Download, Trash2, RotateCcw, ChevronLeft, ChevronDown, GripVertical, MessageSquare, AlertCircle, Maximize2, Copy, Replace, CheckSquare, Check, Filter, MoreHorizontal } from "lucide-react";
+import { Plus, Upload, Download, Trash2, RotateCcw, ChevronLeft, ChevronDown, MessageSquare, AlertCircle, Maximize2, Copy, Replace, CheckSquare, Check, Filter, MoreHorizontal } from "lucide-react";
 import {
     loadPresets,
     savePresets,
@@ -1610,6 +1610,7 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                                 >
                                                     <div
                                                     className="ui-entry-card"
+                                                    data-sort-group="preset-prompts" data-sort-id={prompt.identifier}
                                                     data-active={isEditing}
                                                     data-selected={selectMode && isPromptSelected ? "true" : undefined}
                                                     data-disabled={!effectiveEnabled}
@@ -1660,7 +1661,12 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                                             <div className="flex flex-col gap-1 flex-1">
                                                                 <div className="flex items-center gap-[6px]">
                                                                     {/* Drag Handle shown subtly */}
-                                                                    <GripVertical size={14} className="text-[var(--c-text)]" style={{ opacity: isEditing ? 0 : 0.5 }} />
+                                                                    {!isEditing && <ReorderHandle group="preset-prompts" id={prompt.identifier}
+                                                                        ids={promptRenderItems.flatMap(item => item.type === "item" ? [item.prompt.identifier] : [])}
+                                                                        onMove={(from, to) => {
+                                                                            const rows = promptRenderItems.flatMap((item, index) => item.type === "item" ? [index] : []);
+                                                                            if (rows[from] !== undefined && rows[to] !== undefined) handlePromptReorder(rows[from], rows[to]);
+                                                                        }} />}
                                                                     <span className="menu-label ts-15 font-semibold break-all">
                                                                         {prompt.name || "未命名提示词"}
                                                                     </span>

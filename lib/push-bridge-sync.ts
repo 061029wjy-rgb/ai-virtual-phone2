@@ -135,6 +135,7 @@ async function buildRuleSnapshot(rule: BridgeRule): Promise<Record<string, unkno
         maybeAppendShortcutCapability(llmMessages, { continuationAvailable: true });
         const weixinBotId = maybeAppendWeixinChannel(llmMessages, chat.characterId);
         const request = buildProviderRequest(config, preset, toLlmRequestMessages(llmMessages));
+        if (request.url.startsWith("/api/vertex?")) return null;
         const shortcutContinuation = buildOfflineShortcutContinuation(llmMessages, messages => {
             const req = buildProviderRequest(config, preset, toLlmRequestMessages(messages));
             return { url: req.url, headers: req.headers, body: req.body, providerKind: req.providerKind };
@@ -152,6 +153,7 @@ async function buildRuleSnapshot(rule: BridgeRule): Promise<Record<string, unkno
                     { role: "system", content: "你是「现实桥」的数据加工器。按用户指令处理数据，只输出处理结果本身，不要解释。" },
                     { role: "user", content: `${promptWithSentinel}\n\n数据内容：${BRIDGE_EVENT_SENTINEL}` },
                 ]);
+                if (processReq.url.startsWith("/api/vertex?")) return null;
                 processRequest = {
                     url: processReq.url,
                     headers: processReq.headers,
@@ -316,6 +318,7 @@ async function buildScreenChatSnapshot(): Promise<Record<string, unknown> | null
             { appTags: ["chat", "text"] },
         );
         const request = buildProviderRequest(config, preset, toLlmRequestMessages(llmMessages));
+        if (request.url.startsWith("/api/vertex?")) return null;
         return {
             replyRequest: {
                 url: request.url,

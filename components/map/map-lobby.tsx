@@ -1,4 +1,5 @@
 "use client";
+import { hasModelCredentials } from "@/lib/api-helpers";
 import { useState, useMemo, useEffect } from "react";
 import { ArrowLeft, ChevronDown, MoreHorizontal, Plus, Play, Trash2 } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
@@ -175,8 +176,8 @@ export default function MapLobby({ onClose, onStartGame }: Props) {
     const bindings = loadBindingConfig();
     const firstChar = characters[0];
     const slot = firstChar ? resolveBinding(bindings, firstChar.id, "chat") : null;
-    const apiConfig = (slot?.apiConfigId ? apiConfigs.find(c => c.id === slot.apiConfigId) : null) || apiConfigs.find(c => c.apiKey) || apiConfigs[0];
-    if (!apiConfig?.apiKey) { setError("未找到有效的API配置，请先在设置中配置API"); return; }
+    const apiConfig = (slot?.apiConfigId ? apiConfigs.find(c => c.id === slot.apiConfigId) : null) || apiConfigs.find(hasModelCredentials) || apiConfigs[0];
+    if (!hasModelCredentials(apiConfig)) { setError("未找到有效的API配置，请先在设置中配置API"); return; }
 
     // 1. Create placeholder world immediately
     const now = new Date().toISOString();

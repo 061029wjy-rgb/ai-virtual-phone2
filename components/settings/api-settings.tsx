@@ -9,6 +9,7 @@ import { generateEmbedding, isEmbeddingModelName } from "@/lib/memory-embedding"
 import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
+import { isVertexConfig, parseVertexServiceAccount } from "@/lib/vertex-config";
 import { fetchModel } from "@/lib/model-transport";
 import { determineBaseUrl, simpleLLMCall, buildRequestHeaders, isNativeGoogleApi, isNativeAnthropicApi } from "@/lib/api-helpers";
 
@@ -116,6 +117,7 @@ export function ApiSettings() {
         setTestResult(prev => ({ ...prev, [config.id]: { success: false, message: "" } }));
 
         try {
+            if (isVertexConfig(config)) throw new Error("Vertex 模型可用性由项目和区域决定，请直接填写模型 ID 后测试连接");
             const baseUrl = determineBaseUrl(config);
             if (!baseUrl) throw new Error("缺少 Base URL");
             if (!config.apiKey.trim() && config.authMode !== "none") throw new Error("缺少 API Key");
@@ -310,11 +312,12 @@ export function ApiSettings() {
                                             <label className="menu-desc ml-1">服务商 (Provider)</label>
                                             <select
                                                 value={config.provider}
-                                                onChange={(e) => updateConfig(config.id, { provider: e.target.value, protocol: e.target.value === "Anthropic" ? "anthropic" : e.target.value === "Google" ? "gemini" : "openai-compatible", authMode: ["Ollama", "LMStudio"].includes(e.target.value) ? "none" : "auto" })}
+                                                onChange={(e) => updateConfig(config.id, { provider: e.target.value, protocol: e.target.value === "VertexAI" ? "vertex" : e.target.value === "Anthropic" ? "anthropic" : e.target.value === "Google" ? "gemini" : "openai-compatible", authMode: ["Ollama", "LMStudio"].includes(e.target.value) ? "none" : "auto" })}
                                                 className="ui-select"
                                             >
                                                 <option value="OpenAI">OpenAI</option>
                                                 <option value="Anthropic">Anthropic</option>
+                                                <option value="VertexAI">Google Vertex AI</option>
                                                 <option value="Google">Google Gemini</option>
                                                 <option value="DeepSeek">DeepSeek</option>
                                                 <option value="Groq">Groq</option>
@@ -334,11 +337,13 @@ export function ApiSettings() {
                                         <div className="flex flex-col gap-2">
                                             <label className="menu-desc">接口协议（与模型名称无关）</label>
                                             <select className="ui-select" value={config.protocol || "auto"} onChange={e => updateConfig(config.id, { protocol: e.target.value as ApiConfig["protocol"] })}>
+                                                <option value="vertex">Vertex AI（完整 / Express）</option>
                                                 <option value="auto">沿用原有配置</option>
                                                 <option value="openai-compatible">OpenAI 兼容聊天接口</option>
                                                 <option value="anthropic">Anthropic Messages（支持中转）</option>
                                                 <option value="gemini">Gemini 原生接口（支持中转）</option>
                                             </select>
+                                            {!isVertexConfig(config) && <>
                                             <label className="menu-desc"><input type="checkbox" checked={config.authMode === "none"} onChange={e => updateConfig(config.id, { authMode: e.target.checked ? "none" : "auto" })} /> 无需 API Key（本地服务）</label>
                                             <label className="menu-desc"><input type="checkbox" checked={config.serverProxy === true} onChange={e => updateConfig(config.id, { serverProxy: e.target.checked })} /> 服务端转发（解决浏览器跨域）</label>
                                             <p className="menu-desc">本地模型使用直连。自定义中转若使用服务端转发，需要部署者将域名加入 MODEL_PROXY_ALLOWED_HOSTS。模型可以直接手填，不依赖拉取列表。</p>
@@ -351,7 +356,35 @@ export function ApiSettings() {
                                                     } catch { setTestResult(prev => ({ ...prev, [config.id]: { success: false, message: "请求头 JSON 格式不正确，未保存" } })); }
                                                 }} />
                                             </details>
+                                            </>}
                                         </div>
+                                        {isVertexConfig(config) && <div className="flex flex-col gap-2">
+                                            <label className="menu-desc">Vertex 鉴权模式</label>
+                                            <select aria-label="Vertex 鉴权模式" className="ui-select" value={config.vertexMode || "full"} onChange={e => updateConfig(config.id, { vertexMode: e.target.value as "full" | "express" })}>
+                                                <option value="full">完整模式（服务账号 JSON）</option>
+                                                <option value="express">Express（API Key）</option>
+                                            </select>
+                                            {(config.vertexMode || "full") === "full" && <>
+                                                <label className="menu-desc">导入服务账号 JSON
+                                                    <input aria-label="导入服务账号 JSON" type="file" accept=".json,application/json" onChange={async e => {
+                                                        const file = e.target.files?.[0]; e.target.value = "";
+                                                        if (!file) return;
+                                                        try {
+                                                            if (file.size > 65536) throw new Error("服务账号 JSON 文件过大");
+                                                            const account = parseVertexServiceAccount(await file.text());
+                                                            updateConfig(config.id, { vertexServiceAccount: JSON.stringify(account), vertexProject: config.vertexProject || account.project_id });
+                                                            setTestResult(prev => ({ ...prev, [config.id]: { success: true, message: "服务账号已导入，请选择模型并测试连接" } }));
+                                                        } catch (error) { setTestResult(prev => ({ ...prev, [config.id]: { success: false, message: error instanceof Error ? error.message : "导入失败" } })); }
+                                                    }} />
+                                                </label>
+                                                {config.vertexServiceAccount && <button className="menu-desc text-left" onClick={() => updateConfig(config.id, { vertexServiceAccount: undefined })}>已保存服务账号 · 点击移除</button>}
+                                                <Input aria-label="Google Cloud 项目 ID" value={config.vertexProject || ""} placeholder="项目 ID（导入 JSON 后自动填写）" onChange={e => updateConfig(config.id, { vertexProject: e.target.value })} />
+                                            </>}
+                                            <Input aria-label="Vertex 区域" value={config.vertexLocation || ""} placeholder="区域：global 或 us-central1" onChange={e => updateConfig(config.id, { vertexLocation: e.target.value })} />
+                                            <p className="menu-desc">通过本站服务端连接 Vertex 上的 Gemini，支持流式输出与工具调用。模型 ID 直接手填，区域需与模型匹配。服务账号保存在本机设置中，会随设置备份导出；请求时仅发送给本站服务端完成鉴权。仅在自己信任的部署中导入。</p>
+                                            <p className="menu-desc">此配置暂不支持离线云端代聊和微信独立助手。普通聊天与小手机在线功能可使用。</p>
+                                        </div>}
+                                        {!isVertexConfig(config) && <>
                                         {/* Custom 必填 Base URL；其他 provider 可选填中转站地址 */}
                                         <div className="flex flex-col gap-1">
                                             <label className="menu-desc ml-1">
@@ -376,7 +409,8 @@ export function ApiSettings() {
                                             />
                                         </div>
 
-                                        <div className="flex flex-col gap-1">
+                                        </>}
+                                        {(!isVertexConfig(config) || config.vertexMode === "express") && <div className="flex flex-col gap-1">
                                             <label className="menu-desc ml-1">API Key</label>
                                             <Input
                                                 type="password"
@@ -384,42 +418,29 @@ export function ApiSettings() {
                                                 onChange={(e) => updateConfig(config.id, { apiKey: e.target.value })}
                                                 placeholder="sk-..."
                                             />
-                                        </div>
+                                        </div>}
 
                                         <div className="flex flex-col gap-1">
                                             <label className="menu-desc ml-1">默认模型 (Default Model)</label>
                                             <div className="flex gap-2">
-                                                {fetchedModels[config.id] && fetchedModels[config.id].length > 0 ? (
-                                                    <select
-                                                        value={config.defaultModel}
-                                                        onChange={(e) => updateConfig(config.id, { defaultModel: e.target.value })}
-                                                        className="ui-select flex-1"
-                                                    >
-                                                        <option value="">请选择模型...</option>
-                                                        {fetchedModels[config.id].map(m => (
-                                                            <option key={m} value={m}>{m}</option>
-                                                        ))}
-                                                    </select>
-                                                ) : (
-                                                    <input
-                                                        type="text"
-                                                        value={config.defaultModel}
-                                                        onChange={(e) => updateConfig(config.id, { defaultModel: e.target.value })}
-                                                        placeholder="gpt-4o, claude-3-opus..."
-                                                        className="ui-input flex-1"
-                                                    />
-                                                )}
+                                                <input type="text" value={config.defaultModel}
+                                                    list={`models-${config.id}`}
+                                                    onChange={e => updateConfig(config.id, { defaultModel: e.target.value })}
+                                                    placeholder="gpt-4o, claude-3-opus..." className="ui-input flex-1" />
+                                                <datalist id={`models-${config.id}`}>
+                                                    {(fetchedModels[config.id] || []).map(model => <option key={model} value={model} />)}
+                                                </datalist>
                                             </div>
                                         </div>
 
                                         <div className="flex gap-3 mt-1">
                                             <button
                                                 onClick={() => fetchModels(config)}
-                                                disabled={isFetching[config.id]}
+                                                disabled={isFetching[config.id] || isVertexConfig(config)}
                                                 className="ui-btn ui-btn ui-btn-soft-action flex-1"
                                             >
                                                 <RefreshCw size={16} className={isFetching[config.id] ? "animate-spin" : ""} />
-                                                {isFetching[config.id] ? "拉取中..." : "拉取模型列表"}
+                                                {isVertexConfig(config) ? "Vertex 请手填模型 ID" : isFetching[config.id] ? "拉取中..." : "拉取模型列表"}
                                             </button>
 
                                             <button

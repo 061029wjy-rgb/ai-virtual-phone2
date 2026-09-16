@@ -153,7 +153,11 @@ export type RegexConfig = SettingItemMeta & {
 
 // --- ApiConfig (migrated from api-settings.tsx) ---
 export type ApiConfig = {
-    protocol?: "auto" | "openai-compatible" | "anthropic" | "gemini";
+    protocol?: "auto" | "openai-compatible" | "anthropic" | "gemini" | "vertex";
+    vertexMode?: "full" | "express";
+    vertexProject?: string;
+    vertexLocation?: string;
+    vertexServiceAccount?: string;
     authMode?: "auto" | "none";
     serverProxy?: boolean;
     customHeaders?: Record<string, string>;

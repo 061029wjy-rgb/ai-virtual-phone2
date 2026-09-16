@@ -1,3 +1,4 @@
+import { isVertexConfig, vertexRequestUrl } from "./vertex-config";
 import type { LLMContentPart, LLMMessage } from "./llm-prompt-assembler";
 import type { ApiConfig, PresetConfig } from "./settings-types";
 import {
@@ -244,7 +245,7 @@ export function buildProviderRequest(
 ): LlmRequestPayload {
     const baseUrl = determineBaseUrl(config);
     if (!baseUrl) throw new Error(`API 地址无效：provider=${config.provider}`);
-    if (!config.apiKey.trim() && config.authMode !== "none") throw new Error(`API Key 为空：provider=${config.provider}`);
+    if (!isVertexConfig(config) && !config.apiKey.trim() && config.authMode !== "none") throw new Error(`API Key 为空：provider=${config.provider}`);
 
     const nativeToolProtocol = options.tools && options.tools.length > 0 ? nativeToolProtocolForConfig(config) : null;
     const providerKind = providerKindForConfig(config, { nativeToolProtocol });
@@ -679,7 +680,7 @@ function buildGeminiRequest(
         ? `streamGenerateContent?alt=sse&key=${encodeURIComponent(config.apiKey)}`
         : `generateContent?key=${encodeURIComponent(config.apiKey)}`;
     return {
-        url: `${baseUrl.replace(/\/$/, "")}/models/${config.defaultModel}:${method}`,
+        url: isVertexConfig(config) ? vertexRequestUrl(config, options.stream) : `${baseUrl.replace(/\/$/, "")}/models/${config.defaultModel}:${method}`,
         headers,
         body,
         providerKind: "gemini",

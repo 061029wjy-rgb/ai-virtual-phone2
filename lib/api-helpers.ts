@@ -1,3 +1,4 @@
+import { isVertexConfig, vertexRequestUrl } from "./vertex-config";
 // lib/api-helpers.ts
 // Unified API helpers — single source of truth for provider URL resolution,
 // request headers, and response parsing. All LLM-calling modules should use these.
@@ -13,7 +14,8 @@ const SIMPLE_ANTHROPIC_AUTO_MAX_TOKENS = 8192;
  * Priority: user-configured baseUrl > provider default.
  * Supports all 11 UI providers + Custom (relies on baseUrl field).
  */
-export function determineBaseUrl(config: { provider: string; baseUrl?: string }): string {
+export function determineBaseUrl(config: { provider: string; baseUrl?: string; protocol?: string }): string {
+    if (config.protocol === "vertex" || ((!config.protocol || config.protocol === "auto") && config.provider === "VertexAI")) return "/api/vertex";
     if (config.baseUrl?.trim()) return config.baseUrl.trim().replace(/\/+$/, "").replace(/\/(chat\/completions|messages|embeddings|models)$/, "");
     switch (config.provider) {
         case "OpenAI":      return "https://api.openai.com/v1";
@@ -51,6 +53,7 @@ export function buildChatCompletionsUrl(baseUrl: string): string {
  * and custom proxy/relay sites that use standard Bearer auth.
  */
 export function buildRequestHeaders(config: ApiConfig, baseUrl: string): Record<string, string> {
+    if (isVertexConfig(config)) return { "Content-Type": "application/json" };
     const headers: Record<string, string> = {
         "Content-Type": "application/json",
     };
@@ -95,6 +98,7 @@ export function isNativeAnthropicApi(config: ApiConfig): boolean {
  * OpenAI-compatible endpoints should use Custom provider + baseUrl.
  */
 export function isNativeGoogleApi(config: ApiConfig): boolean {
+    if (isVertexConfig(config)) return true;
     // 之前要求 baseUrl 必须为空才认为是原生 Gemini，这导致中转站（如 dzzi.ai 暴露的 /v1beta 端点）
     // 没法被识别成原生 Gemini，只能走 OpenAI 兼容路径，进而 thoughtSignature 丢失、多轮工具调用失败。
     // 现在只要 provider=Google 就走原生 Gemini 协议；用户填的 baseUrl 由 determineBaseUrl 处理。
@@ -113,7 +117,7 @@ export async function simpleLLMCall(
     options?: { temperature?: number; max_tokens?: number; signal?: AbortSignal; label?: string },
 ): Promise<{ content: string | null; error?: string; finishReason?: string; wasTruncated?: boolean }> {
     const baseUrl = determineBaseUrl(config);
-    if (!baseUrl || (!config.apiKey.trim() && config.authMode !== "none")) {
+    if (!baseUrl || (!isVertexConfig(config) && !config.apiKey.trim() && config.authMode !== "none")) {
         return { content: null, error: "API 地址或密钥无效" };
     }
 
@@ -143,15 +147,16 @@ export async function simpleLLMCall(
             });
         } else if (isNativeGoogleApi(config)) {
             // Google Gemini API
-            fetchUrl = `${baseUrl.replace(/\/$/, "")}/models/${config.defaultModel}:generateContent?key=${config.apiKey}`;
+            fetchUrl = isVertexConfig(config) ? vertexRequestUrl(config) : `${baseUrl.replace(/\/$/, "")}/models/${config.defaultModel}:generateContent?key=${encodeURIComponent(config.apiKey)}`;
             // Remove Authorization header for Gemini (uses URL key)
             delete headers["Authorization"];
-            const parts = messages.map(m => ({
+            const parts = messages.filter(m => m.role !== "system").map(m => ({
                 role: m.role === "assistant" ? "model" : "user",
                 parts: [{ text: m.content }],
             }));
             body = JSON.stringify({
                 contents: parts,
+                ...(messages.some(m => m.role === "system") ? { systemInstruction: { parts: [{ text: messages.filter(m => m.role === "system").map(m => m.content).join("\n\n") }] } } : {}),
                 generationConfig: {
                     temperature,
                     ...(max_tokens ? { maxOutputTokens: max_tokens } : {}),
@@ -431,4 +436,10 @@ export function extractReasoningContent(data: Record<string, unknown>): string {
     }
 
     return "";
+}
+
+export function hasModelCredentials(config: ApiConfig | undefined): config is ApiConfig {
+    if (!config) return false;
+    if (isVertexConfig(config) && config.vertexMode !== "express") return Boolean(config.vertexServiceAccount);
+    return config.authMode === "none" || Boolean(config.apiKey?.trim());
 }

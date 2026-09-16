@@ -1,3 +1,4 @@
+import { isVertexConfig } from "./vertex-config";
 import type { ChatMessage, ChatSession } from "./chat-storage";
 import {
   createOrGetSession,
@@ -1067,6 +1068,7 @@ async function buildWeixinCloudPromptContext(params: {
   memoryConfig: MemoryConfig;
   chatAppSettings: ReturnType<typeof loadChatAppSettings>;
 }): Promise<WeixinCloudPromptContext> {
+  if (isVertexConfig(params.apiConfig)) throw new Error("微信独立助手暂不支持 Vertex，请为微信绑定其他兼容接口");
   const appId = "chat" as const;
   const enabledTools = getEnabledTools(appId);
   const usesNativeActions = Boolean(nativeToolProtocolForConfig(params.apiConfig) && enabledTools.length > 0);

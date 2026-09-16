@@ -131,6 +131,7 @@ export async function armReplyBailout(params: {
     replyAfter?: { localMessageId: string; createdAt: string };
     signal?: AbortSignal;
 }): Promise<ReplyBailoutHandle | null> {
+    if (params.request.url.startsWith("/api/vertex?")) return null;
     if (!bailoutEnabled()) return null;
     if (!(await hasAccountPushSubscription())) return null;
     if (params.signal?.aborted) return null;
@@ -279,6 +280,7 @@ export async function armFollowUpBailout(
         // 所以照常注入动作目录，别让角色在离线追问里以为自己什么都做不了。
         maybeAppendShortcutCapability(llmMessages, { continuationAvailable: true });
         const request = buildProviderRequest(config, preset, toLlmRequestMessages(llmMessages));
+        if (request.url.startsWith("/api/vertex?")) return;
         const shortcutContinuation = buildOfflineShortcutContinuation(llmMessages, messages => {
             const req = buildProviderRequest(config, preset, toLlmRequestMessages(messages));
             return { url: req.url, headers: req.headers, body: req.body, providerKind: req.providerKind };
@@ -334,6 +336,7 @@ async function postBailoutJob(input: {
     weixinBotId?: string;
     shortcutContinuation?: OfflineShortcutContinuation | null;
 }): Promise<boolean> {
+    if (input.request.url.startsWith("/api/vertex?")) return false;
     const response = await pushJobsFetch({
         method: "POST",
         headers: { "Content-Type": "application/json" },
