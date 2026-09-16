@@ -1,3 +1,4 @@
+import { isSameOriginRequest } from "@/lib/same-origin-request";
 import { proxyFetch } from "@/lib/proxy-fetch";
 
 export const runtime = "nodejs";
@@ -7,8 +8,7 @@ export const maxDuration = 300;
 const DEFAULT_HOSTS = ["api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com", "api.deepseek.com", "api.groq.com", "openrouter.ai", "api.moonshot.cn", "open.bigmodel.cn", "api.siliconflow.cn", "api.together.xyz", "api.mistral.ai", "api.x.ai", "api.minimax.io", "api.minimaxi.com", "api-uw.minimax.io"];
 
 export async function POST(request: Request) {
-    const origin = request.headers.get("origin");
-    if (origin && origin !== new URL(request.url).origin) return Response.json({ error: { message: "不允许跨站调用" } }, { status: 403 });
+    if (!isSameOriginRequest(request)) return Response.json({ error: { message: "不允许跨站调用" } }, { status: 403 });
     try {
         const input = await request.json();
         const url = new URL(input.url);

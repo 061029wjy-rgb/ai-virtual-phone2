@@ -17,6 +17,13 @@ export function parseVertexServiceAccount(text: string): VertexServiceAccount {
     return { type: "service_account", project_id: value.project_id, client_email: value.client_email, private_key: value.private_key, ...(typeof value.private_key_id === "string" ? { private_key_id: value.private_key_id } : {}) };
 }
 
+export function isValidVertexProject(value: string): boolean {
+    return /^[a-zA-Z0-9][a-zA-Z0-9:._-]{0,127}$/.test(value.trim());
+}
+export function projectAfterVertexImport(previous: string | undefined, imported: string): string {
+    return previous && isValidVertexProject(previous) ? previous.trim() : imported;
+}
+
 // Credentials only enter transport at send time; prompt/debug/offline request snapshots contain no private key.
 const credentials = new Map<string, { serviceAccount?: VertexServiceAccount; apiKey?: string }>();
 export function vertexRequestUrl(config: ApiConfig, stream = false): string {
@@ -24,6 +31,7 @@ export function vertexRequestUrl(config: ApiConfig, stream = false): string {
     const serviceAccount = mode === "full" ? parseVertexServiceAccount(config.vertexServiceAccount || "") : undefined;
     if (mode === "express" && !config.apiKey.trim()) throw new Error("Vertex Express 需要 API Key");
     const project = config.vertexProject?.trim() || serviceAccount?.project_id || "";
+    if (mode === "full" && !isValidVertexProject(project)) throw new Error("项目 ID 只能填写项目标识，不能粘贴整段 JSON。请重新导入服务账号，或清空项目 ID 以使用账号中的项目");
     const location = config.vertexLocation?.trim() || "global";
     credentials.set(config.id, serviceAccount ? { serviceAccount } : { apiKey: config.apiKey.trim() });
     const query = new URLSearchParams({ config: config.id, mode, project, location, model: config.defaultModel.trim(), stream: String(stream) });

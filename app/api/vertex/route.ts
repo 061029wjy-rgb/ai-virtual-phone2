@@ -1,11 +1,11 @@
+import { isSameOriginRequest } from "@/lib/same-origin-request";
 import { sendVertexRequest, VertexError } from "@/lib/vertex-server";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function POST(request: Request) {
     const url = new URL(request.url);
-    const origin = request.headers.get("origin");
-    if (origin && origin !== url.origin) return Response.json({ error: { message: "不允许跨站调用" } }, { status: 403 });
+    if (!isSameOriginRequest(request)) return Response.json({ error: { message: "不允许跨站调用" } }, { status: 403 });
     try {
         const input = await request.json();
         if (!input || typeof input !== "object" || Array.isArray(input)) throw new VertexError("请求格式不正确");

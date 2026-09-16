@@ -10,7 +10,7 @@ import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
 import { VertexCredentials } from "./vertex-credentials";
-import { isVertexConfig } from "@/lib/vertex-config";
+import { isVertexConfig, projectAfterVertexImport } from "@/lib/vertex-config";
 import { fetchModel } from "@/lib/model-transport";
 import { determineBaseUrl, simpleLLMCall, buildRequestHeaders, isNativeGoogleApi, isNativeAnthropicApi } from "@/lib/api-helpers";
 
@@ -368,15 +368,17 @@ export function ApiSettings() {
                                             {(config.vertexMode || "full") === "full" && <>
                                                 <VertexCredentials key={config.id} value={config.vertexServiceAccount}
                                                     onImport={(json, project) => {
-                                                        updateConfig(config.id, { vertexServiceAccount: json, vertexProject: config.vertexProject || project });
+                                                        updateConfig(config.id, { vertexServiceAccount: json, vertexProject: projectAfterVertexImport(config.vertexProject, project) });
                                                         setTestResult(prev => ({ ...prev, [config.id]: { success: true, message: "服务账号已导入，请选择模型并测试连接" } }));
                                                     }}
                                                     onRemove={() => {
                                                         updateConfig(config.id, { vertexServiceAccount: undefined });
                                                         setTestResult(prev => ({ ...prev, [config.id]: { success: false, message: "服务账号已移除，请重新导入后测试连接" } }));
                                                     }} />
+                                                <label className="menu-desc">Google Cloud 项目 ID（不是 JSON 内容）</label>
                                                 <Input aria-label="Google Cloud 项目 ID" value={config.vertexProject || ""} placeholder="项目 ID（导入 JSON 后自动填写）" onChange={e => updateConfig(config.id, { vertexProject: e.target.value })} />
                                             </>}
+                                            <label className="menu-desc">Vertex 区域</label>
                                             <Input aria-label="Vertex 区域" value={config.vertexLocation || ""} placeholder="区域：global 或 us-central1" onChange={e => updateConfig(config.id, { vertexLocation: e.target.value })} />
                                             <p className="menu-desc">通过本站服务端连接 Vertex 上的 Gemini，支持流式输出与工具调用。模型 ID 直接手填，区域需与模型匹配。服务账号保存在本机设置中，会随设置备份导出；请求时仅发送给本站服务端完成鉴权。仅在自己信任的部署中导入。</p>
                                             <p className="menu-desc">此配置暂不支持离线云端代聊和微信独立助手。普通聊天与小手机在线功能可使用。</p>

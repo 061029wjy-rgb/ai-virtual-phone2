@@ -297,4 +297,40 @@ await test('软件更新并发写入被 GitHub 拒绝时不强推，网络失败
     await assert.rejects(checkPhoneUpdate('',oldSha,undefined,async()=>{throw new Error('offline');}),/offline/);
 });
 
+await test('代理部署同源请求通过，跨站、同站异源和伪造转发头仍被拒绝', async () => {
+    const { isSameOriginRequest } = await import('../lib/same-origin-request.ts');
+    const request = headers => new Request('http://internal:3000/api/vertex', {method:'POST', headers});
+    assert.equal(isSameOriginRequest(request({origin:'https://phone.example', 'sec-fetch-site':'same-origin'})), true);
+    for (const site of ['cross-site', 'same-site']) {
+        assert.equal(isSameOriginRequest(request({origin:'https://evil.example', 'sec-fetch-site':site})), false);
+        assert.equal(isSameOriginRequest(request({'sec-fetch-site':site})), false);
+    }
+    assert.equal(isSameOriginRequest(request({origin:'null', 'sec-fetch-site':'same-origin'})), false);
+    assert.equal(isSameOriginRequest(request({origin:'https://evil.example', 'x-forwarded-host':'evil.example'})), false);
+    assert.equal(isSameOriginRequest(request({origin:'http://internal:3000'})), true);
+    assert.equal(isSameOriginRequest(request({origin:'invalid'})), false);
+    // Exercise both real route handlers without contacting Google or another paid API.
+    for (const path of ['../app/api/vertex/route.ts', '../app/api/model-request/route.ts']) {
+        const { POST } = await import(path);
+        const cross = await POST(request({origin:'https://evil.example', 'sec-fetch-site':'cross-site'}));
+        assert.equal(cross.status,403);
+        const local = await POST(new Request('http://internal:3000/api/vertex', {
+            method:'POST', headers:{origin:'https://phone.example','sec-fetch-site':'same-origin','content-type':'application/json'}, body:'{}'
+        }));
+        assert.notEqual(local.status,403);
+    }
+});
+await test('Vertex 导入修复 JSON 误填项目，保留有效覆盖值，发送前拒绝无效项目且不泄漏密钥到 URL', async () => {
+    const { projectAfterVertexImport, vertexRequestUrl } = await import('../lib/vertex-config.ts');
+    const account = JSON.stringify({type:'service_account',project_id:'test-project',client_email:'test@example.com',private_key:'-----BEGIN PRIVATE KEY-----test'});
+    assert.equal(projectAfterVertexImport(account,'test-project'),'test-project');
+    assert.equal(projectAfterVertexImport('other-project','test-project'),'other-project');
+    assert.equal(projectAfterVertexImport('','test-project'),'test-project');
+    const config = {id:'project-test',apiKey:'',defaultModel:'test-model',vertexMode:'full',vertexServiceAccount:account,vertexProject:account};
+    assert.throws(()=>vertexRequestUrl(config),/不能粘贴整段 JSON/);
+    const url = vertexRequestUrl({...config,vertexProject:projectAfterVertexImport(account,'test-project')});
+    assert.equal(new URL(url,'https://phone.example').searchParams.get('project'),'test-project');
+    assert.ok(!url.includes('PRIVATE'));
+});
+
 console.log(`\n${passed} compatibility checks passed (mock APIs; no paid requests).`);
