@@ -1,5 +1,11 @@
 # AI Virtual Phone
 
+> **小手机兼容改进版**：基于 [原项目](https://github.com/xiaolongbao0709/ai-virtual-phone)，保留原项目许可与小手机功能。新增酒馆角色卡／世界书导入、世界书与预设拖动排序、多协议模型连接、Vertex AI 完整模式，以及 MiniMax 合成与试听修复。酒馆预设不在兼容范围。
+>
+> 使用说明与已知限制见 [兼容版说明](docs/phone-compatibility.md)。Vertex 与 MiniMax 尚未使用真实服务账号进行端到端验证。
+>
+> **部署本版**：在 Vercel 或 Netlify 导入本仓库，部署分支选择 `codex/phone-compatibility`，构建命令 `npm run build`，并在构建前设置 `NEXT_PUBLIC_SELF_HOSTED_MODE=true`。需要支持 Next.js 服务端的部署环境，不能仅部署到 GitHub Pages。每位用户在应用设置中配置自己的模型和语音凭据，不要把密钥或服务账号 JSON 提交到仓库。
+
 一个基于 Next.js 的 AI 虚拟互动手机：在浏览器中模拟一部完整的手机，支持与你创建的 AI 角色进行仿真聊天、朋友圈互动与剧情创作。
 
 主要功能：
@@ -24,8 +30,8 @@
 ## 快速开始（本地运行）
 
 ```bash
-git clone -b main <repo-url>
-cd <repo-dir>
+git clone -b codex/phone-compatibility https://github.com/wusuiling-if/ai-virtual-phone.git
+cd ai-virtual-phone
 npm install
 cp .env.example .env.local
 npm run dev
@@ -53,7 +59,7 @@ NEXT_PUBLIC_SELF_HOSTED_MODE=true
 
 两个平台都可以直接导入本仓库部署：
 
-1. 新建站点 / 项目，关联你 fork 或 clone 的仓库，选择 `main` 或 `test` 分支；
+1. 新建站点 / 项目，关联你 fork 或 clone 的仓库，选择 `codex/phone-compatibility` 分支；
 2. 构建设置保持默认即可（Netlify 会自动读取仓库里的 `netlify.toml`；Vercel 自动识别 Next.js）；
 3. **在平台后台添加环境变量**（平台不会读取仓库里的 `.env.example`）：
 
