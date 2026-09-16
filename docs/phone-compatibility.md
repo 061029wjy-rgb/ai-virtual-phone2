@@ -40,7 +40,7 @@ npm run build
 ## 本次验证记录
 
 - 锁定 `package-lock.json` 安装依赖；生产构建通过，独立 TypeScript 检查通过。
-- 14 项兼容检查、385 个微信提示词对照场景、个人云分发一致性检查通过。
+- 18 项兼容检查、385 个微信提示词对照场景、个人云分发一致性检查通过。
 - Chromium 页面测试：导入酒馆世界书；鼠标拖动、键盘排序；条目和世界书列表刷新后顺序保持。
 - MiniMax 设置页使用模拟上游验证：请求走服务端、正确传递 hex 参数、展示业务错误、错误后退出加载状态。未执行真实付费合成。
 
@@ -50,3 +50,5 @@ npm run build
 Vertex 鉴权参照 [SillyTavern 实现](https://github.com/SillyTavern/SillyTavern/blob/release/src/endpoints/google.js) 与 [Google 服务账号 OAuth 文档](https://developers.google.com/identity/protocols/oauth2/service-account)，完整模式端点参照 [Google Vertex 入门文档](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start/quickstart)。
 
 2026-09-16：改进 Vertex 手机端凭据输入，扩大文件选择按钮、取消文件类型过滤、增加粘贴 JSON 并校验保存、支持 UTF-8 BOM，区分未导入账号与 JSON 语法错误。仅填写模型 ID 不能替代完整模式的服务账号鉴权；这些输入改进尚待真实 iOS 设备复验。
+
+软件更新入口和首次授权见 [更新教程](software-update.md)。检查构建版本、快进同步、权限／来源／分叉校验均有模拟测试；同步后等待部署完成，不把提交成功当成上线成功。

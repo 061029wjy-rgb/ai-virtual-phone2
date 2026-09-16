@@ -234,4 +234,67 @@ await test('Vertex 未导入账号与 JSON 格式错误分别提示，并接受 
     assert.match(result.error, /尚未导入服务账号/);
 });
 
+const { checkPhoneUpdate, syncPhoneFork, normalizeUpdateRepository, UPDATE_REPOSITORY } = await import('../lib/phone-update.ts');
+const oldSha = 'a'.repeat(40), latestSha = 'b'.repeat(40);
+await test('软件更新区分页面待刷新、上游新版、当前版、自定义分支和未知构建', async () => {
+    const response = (data) => Response.json(data);
+    const newerDeployment = await checkPhoneUpdate('', oldSha, undefined, async url => {
+        assert.ok(String(url).startsWith('/api/app-version')); return response({ sha: latestSha });
+    });
+    assert.equal(newerDeployment.state, 'refresh');
+    for (const [deployed, comparison, state] of [[oldSha,'ahead','available'],[latestSha,'identical','current'],[oldSha,'diverged','custom'],['','ahead','unknown']]) {
+        const result = await checkPhoneUpdate('', deployed, undefined, async url => {
+            if (String(url).startsWith('/api/app-version')) return response({ sha: deployed });
+            if (String(url).includes('/compare/')) return response({ status: comparison });
+            return response({ sha: latestSha, commit: { message: 'Update test' } });
+        });
+        assert.equal(result.state,state);
+    }
+});
+await test('软件更新只向 GitHub 发送授权并验证 Fork，快进同步后复核 SHA', async () => {
+    let current = oldSha, writes = 0;
+    const fetcher = async (url, init) => {
+        const u = new URL(url); assert.equal(u.origin,'https://api.github.com');
+        assert.equal(init.headers.Authorization,'Bearer fake-update-token');
+        if (u.pathname.includes('/commits/')) return Response.json({ sha:latestSha });
+        if (u.pathname.endsWith('/repos/test-user/phone')) return Response.json({ full_name:'test-user/phone',fork:true,source:{full_name:UPDATE_REPOSITORY},permissions:{push:true} });
+        if (u.pathname.includes('/compare/')) return Response.json({ status:'ahead' });
+        if (init.method === 'PATCH') { assert.deepEqual(JSON.parse(init.body),{sha:latestSha,force:false});writes++;current=latestSha; }
+        return Response.json({object:{sha:current}});
+    };
+    assert.deepEqual(await syncPhoneFork('https://github.com/test-user/phone.git','fake-update-token',latestSha,undefined,fetcher),{sha:latestSha,changed:true});
+    assert.equal(writes,1);
+    assert.deepEqual(await syncPhoneFork('test-user/phone','fake-update-token',latestSha,undefined,fetcher),{sha:latestSha,changed:false});
+    assert.equal(writes,1);
+});
+await test('软件更新拒绝错误来源、无权限、分叉、上游竞态和无效仓库，不执行写入', async () => {
+    assert.throws(()=>normalizeUpdateRepository('https://evil.test/a/b'),/仓库/);
+    for (const scenario of ['wrong-source','no-permission','diverged','changed-source','unauthorized']) {
+        let writes=0;
+        const fetcher=async (url,init) => {
+            if(init.method==='PATCH')writes++;
+            if(scenario==='unauthorized')return Response.json({}, {status:401});
+            if(url.includes('/commits/'))return Response.json({sha:scenario==='changed-source'?oldSha:latestSha});
+            if(url.endsWith('/repos/test-user/phone'))return Response.json({full_name:'test-user/phone',fork:true,source:{full_name:scenario==='wrong-source'?'xiaolongbao0709/ai-virtual-phone':UPDATE_REPOSITORY},permissions:{push:scenario!=='no-permission'}});
+            if(url.includes('/compare/'))return Response.json({status:'diverged'});
+            return Response.json({object:{sha:oldSha}});
+        };
+        await assert.rejects(syncPhoneFork('test-user/phone','fake',latestSha,undefined,fetcher));
+        assert.equal(writes,0);
+    }
+    await assert.rejects(syncPhoneFork('test-user/phone','',latestSha),/首次更新/);
+});
+await test('软件更新并发写入被 GitHub 拒绝时不强推，网络失败不误报最新', async () => {
+    let writes=0;
+    await assert.rejects(syncPhoneFork('test-user/phone','fake',latestSha,undefined,async (url,init)=>{
+        if(url.includes('/commits/'))return Response.json({sha:latestSha});
+        if(url.endsWith('/repos/test-user/phone'))return Response.json({full_name:'test-user/phone',fork:true,source:{full_name:UPDATE_REPOSITORY},permissions:{push:true}});
+        if(url.includes('/compare/'))return Response.json({status:'ahead'});
+        if(init.method==='PATCH'){writes++;assert.equal(JSON.parse(init.body).force,false);return Response.json({}, {status:422});}
+        return Response.json({object:{sha:oldSha}});
+    }),/未强制覆盖/);
+    assert.equal(writes,1);
+    await assert.rejects(checkPhoneUpdate('',oldSha,undefined,async()=>{throw new Error('offline');}),/offline/);
+});
+
 console.log(`\n${passed} compatibility checks passed (mock APIs; no paid requests).`);

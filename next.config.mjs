@@ -1,5 +1,6 @@
 import path from "node:path";
 import os from "node:os";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -19,9 +20,23 @@ function resolveDistDir() {
   return path.join(os.tmpdir(), `next-dist-${safeProjectName}`);
 }
 
+// Stamp the deployed commit into both client and server bundles. Never expose an update token.
+let phoneBuildSha = process.env.PHONE_BUILD_SHA || process.env.VERCEL_GIT_COMMIT_SHA || process.env.COMMIT_REF || "";
+if (!/^[a-f0-9]{40}$/i.test(phoneBuildSha)) {
+  try { phoneBuildSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: projectRoot, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); }
+  catch { phoneBuildSha = ""; }
+}
+let phoneBuildRepository = process.env.VERCEL_GIT_REPO_OWNER && process.env.VERCEL_GIT_REPO_SLUG
+  ? `${process.env.VERCEL_GIT_REPO_OWNER}/${process.env.VERCEL_GIT_REPO_SLUG}` : "";
+if (!phoneBuildRepository && process.env.REPOSITORY_URL) {
+  const match = process.env.REPOSITORY_URL.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
+  phoneBuildRepository = match?.[1] || "";
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typedRoutes: true,
+  env: { NEXT_PUBLIC_PHONE_BUILD_SHA: /^[a-f0-9]{40}$/i.test(phoneBuildSha) ? phoneBuildSha : "", NEXT_PUBLIC_PHONE_BUILD_REPOSITORY: phoneBuildRepository },
   outputFileTracingRoot: projectRoot,
   distDir: resolveDistDir(),
   eslint: {

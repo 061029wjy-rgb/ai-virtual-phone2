@@ -14,6 +14,7 @@ import { WorldBookManager } from "./settings/worldbook-manager";
 import { RegexManager } from "./settings/regex-manager";
 import { DataManagement } from "./settings/data-management";
 import { UserIdentitySettings } from "./settings/user-identity";
+import { SoftwareUpdate } from "./settings/software-update";
 import { AboutDeclaration } from "./settings/about-declaration";
 import { BindingManager } from "./settings/binding-manager";
 import { WeixinSettings } from "./settings/weixin-settings";
@@ -57,6 +58,7 @@ type SubPage =
     | "toolbox"
     | "agentComputer"
     | "moderation"
+    | "update"
     | "about";
 
 const SETTINGS_MENU = [
@@ -73,6 +75,7 @@ const SETTINGS_MENU = [
     { id: "toolbox", icon: Wrench, label: "聊天工具箱", desc: "外部工具调用", iconColor: BINDING_ACCENTS.voice , glass: "toolbox" },
     { id: "agentComputer", icon: Laptop, label: "角色电脑", desc: "云端小电脑（自部署）", iconColor: BINDING_ACCENTS.memory , glass: "agent-computer" },
     { id: "identity", icon: UserCircle, label: "用户身份", desc: "个人信息", iconColor: BINDING_ACCENTS.identity , glass: "identity" },
+    { id: "update", icon: CloudUpload, label: "软件更新", desc: "检查更新与一键升级", iconColor: BINDING_ACCENTS.api, glass: "" },
     { id: "about", icon: Info, label: "关于与声明", desc: "版本与协议", iconColor: BINDING_ACCENTS.memory , glass: "about" },
 ] as const;
 
@@ -326,6 +329,8 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                 return <ModerationCenter onNotice={onNotice} />;
             case "identity":
                 return <UserIdentitySettings />;
+            case "update":
+                return <SoftwareUpdate />;
             case "about":
                 return <AboutDeclaration />;
             default:
@@ -515,7 +520,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                         <CardGrid
                             label="User"
                             labelClassName="settings-menu-section-title"
-                            items={SETTINGS_MENU.filter(item => ["identity", "about"].includes(item.id)).map(makeCardItem)}
+                            items={SETTINGS_MENU.filter(item => ["identity", "update", "about"].includes(item.id)).map(makeCardItem)}
                         />
                         {floatingDockSheetOpen && (
                             <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setFloatingDockSheetOpen(false)}>
