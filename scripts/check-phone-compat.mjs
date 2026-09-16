@@ -333,4 +333,44 @@ await test('Vertex 导入修复 JSON 误填项目，保留有效覆盖值，发�
     assert.ok(!url.includes('PRIVATE'));
 });
 
+await test('Vertex 等待上游时立即发送保活，非流式状态和中文表情完整还原', async () => {
+    const { keepAliveModelResponse, unwrapModelResponse } = await import('../lib/model-response-tunnel.ts');
+    let release;
+    const response = keepAliveModelResponse(() => new Promise(resolve => {release=resolve;}), new AbortController().signal, 5);
+    const reader = response.body.getReader();
+    assert.equal(new TextDecoder().decode((await reader.read()).value),'\n');
+    assert.equal(new TextDecoder().decode((await reader.read()).value),'\n');
+    release(Response.json({candidates:[{content:{parts:[{text:'晚安[表情包:小猫挥手]🐱'}]}}]}));
+    // Reattach the remaining framed bytes after checking heartbeats.
+    const rest = new ReadableStream({async pull(controller){const part=await reader.read();if(part.done)controller.close();else controller.enqueue(part.value);}});
+    const restored = await unwrapModelResponse(new Response(rest,{headers:response.headers}));
+    assert.equal(restored.status,200);
+    assert.equal((await restored.json()).candidates[0].content.parts[0].text,'晚安[表情包:小猫挥手]🐱');
+    for(const status of [400,401,403,429,504]){
+        const original = {error:{message:'upstream failure'}};
+        const result = await unwrapModelResponse(keepAliveModelResponse(async()=>Response.json(original,{status}),new AbortController().signal));
+        assert.equal(result.status,status);assert.deepEqual(await result.json(),original);
+    }
+});
+await test('Vertex 保活保持 SSE 字节内容，取消会中止上游，截断不误报成功', async () => {
+    const { keepAliveModelResponse, unwrapModelResponse } = await import('../lib/model-response-tunnel.ts');
+    const text='data: {"text":"你好🐱[表情包:挥手]"}\n\ndata: [DONE]\n\n';
+    const bytes=new TextEncoder().encode(text);
+    const stream=new ReadableStream({start(controller){for(const byte of bytes)controller.enqueue(Uint8Array.of(byte));controller.close();}});
+    const result=await unwrapModelResponse(keepAliveModelResponse(async()=>new Response(stream,{headers:{'content-type':'text/event-stream'}}),new AbortController().signal));
+    assert.equal(result.headers.get('content-type'),'text/event-stream');assert.equal(await result.text(),text);
+    let upstreamSignal;
+    const waiting=keepAliveModelResponse(signal=>{upstreamSignal=signal;return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(new Error('cancelled'))));},new AbortController().signal);
+    const reader=waiting.body.getReader();await reader.read();await reader.cancel();assert.equal(upstreamSignal.aborted,true);
+    const truncated=new Response('{"type":"head","status":200}\n{"type":"data","text":"partial"}\n',{headers:{'x-phone-response-tunnel':'1'}});
+    const partial=await unwrapModelResponse(truncated);await assert.rejects(partial.text(),/提前中断/);
+    const gateway=await unwrapModelResponse(new Response('<HTML>Inactivity Timeout</HTML>',{status:504}));
+    assert.equal(gateway.status,504);assert.ok(!(await gateway.text()).includes('<HTML>'));
+});
+await test('表情包结尾保持为 Gemini 正文，不凭空产生工具调用', async () => {
+    const text='晚安[表情包:小猫挥手]';
+    const result=parseProviderResponse('gemini',{candidates:[{content:{parts:[{text}]},finishReason:'STOP'}]});
+    assert.equal(result.content,text);assert.deepEqual(result.toolCalls,[]);
+});
+
 console.log(`\n${passed} compatibility checks passed (mock APIs; no paid requests).`);
