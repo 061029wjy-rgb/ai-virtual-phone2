@@ -9,7 +9,8 @@ import { generateEmbedding, isEmbeddingModelName } from "@/lib/memory-embedding"
 import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
-import { isVertexConfig, parseVertexServiceAccount } from "@/lib/vertex-config";
+import { VertexCredentials } from "./vertex-credentials";
+import { isVertexConfig } from "@/lib/vertex-config";
 import { fetchModel } from "@/lib/model-transport";
 import { determineBaseUrl, simpleLLMCall, buildRequestHeaders, isNativeGoogleApi, isNativeAnthropicApi } from "@/lib/api-helpers";
 
@@ -365,19 +366,15 @@ export function ApiSettings() {
                                                 <option value="express">Express（API Key）</option>
                                             </select>
                                             {(config.vertexMode || "full") === "full" && <>
-                                                <label className="menu-desc">导入服务账号 JSON
-                                                    <input aria-label="导入服务账号 JSON" type="file" accept=".json,application/json" onChange={async e => {
-                                                        const file = e.target.files?.[0]; e.target.value = "";
-                                                        if (!file) return;
-                                                        try {
-                                                            if (file.size > 65536) throw new Error("服务账号 JSON 文件过大");
-                                                            const account = parseVertexServiceAccount(await file.text());
-                                                            updateConfig(config.id, { vertexServiceAccount: JSON.stringify(account), vertexProject: config.vertexProject || account.project_id });
-                                                            setTestResult(prev => ({ ...prev, [config.id]: { success: true, message: "服务账号已导入，请选择模型并测试连接" } }));
-                                                        } catch (error) { setTestResult(prev => ({ ...prev, [config.id]: { success: false, message: error instanceof Error ? error.message : "导入失败" } })); }
+                                                <VertexCredentials key={config.id} value={config.vertexServiceAccount}
+                                                    onImport={(json, project) => {
+                                                        updateConfig(config.id, { vertexServiceAccount: json, vertexProject: config.vertexProject || project });
+                                                        setTestResult(prev => ({ ...prev, [config.id]: { success: true, message: "服务账号已导入，请选择模型并测试连接" } }));
+                                                    }}
+                                                    onRemove={() => {
+                                                        updateConfig(config.id, { vertexServiceAccount: undefined });
+                                                        setTestResult(prev => ({ ...prev, [config.id]: { success: false, message: "服务账号已移除，请重新导入后测试连接" } }));
                                                     }} />
-                                                </label>
-                                                {config.vertexServiceAccount && <button className="menu-desc text-left" onClick={() => updateConfig(config.id, { vertexServiceAccount: undefined })}>已保存服务账号 · 点击移除</button>}
                                                 <Input aria-label="Google Cloud 项目 ID" value={config.vertexProject || ""} placeholder="项目 ID（导入 JSON 后自动填写）" onChange={e => updateConfig(config.id, { vertexProject: e.target.value })} />
                                             </>}
                                             <Input aria-label="Vertex 区域" value={config.vertexLocation || ""} placeholder="区域：global 或 us-central1" onChange={e => updateConfig(config.id, { vertexLocation: e.target.value })} />

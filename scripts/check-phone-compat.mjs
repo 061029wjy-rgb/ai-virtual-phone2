@@ -224,4 +224,14 @@ await test('Vertex 全局地址、Express Key、参数拦截和失败信息不�
     assert.equal(denied.status, 403);
 });
 
+await test('Vertex 未导入账号与 JSON 格式错误分别提示，并接受 BOM', async () => {
+    const { parseVertexServiceAccount } = await import('../lib/vertex-config.ts');
+    assert.throws(() => parseVertexServiceAccount('  '), /尚未导入服务账号/);
+    assert.throws(() => parseVertexServiceAccount('{bad'), /JSON 格式不正确/);
+    assert.throws(() => parseVertexServiceAccount('{"project_id":"x"}'), /client_email/);
+    assert.equal(parseVertexServiceAccount('\uFEFF' + JSON.stringify(serviceAccount)).project_id, serviceAccount.project_id);
+    const result = await simpleLLMCall({ ...vertexConfig, vertexServiceAccount: '' }, [{ role: 'user', content: 'hi' }]);
+    assert.match(result.error, /尚未导入服务账号/);
+});
+
 console.log(`\n${passed} compatibility checks passed (mock APIs; no paid requests).`);
