@@ -7,13 +7,6 @@ export const CHAR_BLOCKED_FIELDS = "CHAR_BLOCKED_FIELDS";
 
 const STORAGE_KEY = "ai_phone_characters_v1";
 const BG_ITEMS_STORAGE_KEY = "ai_phone_bg_items_v1";
-const UNSUPPORTED_CHARACTER_IMPORT_FIELDS = [
-  "greeting",
-  "first_mes",
-  "alternate_greetings",
-  "mes_example",
-  "scenario",
-] as const;
 registerKvMigration(STORAGE_KEY);
 registerKvMigration(BG_ITEMS_STORAGE_KEY);
 
@@ -146,6 +139,7 @@ export function exportCharacterAsJson(char: Character): void {
     personality: char.personality || "",
     avatar: char.avatar ?? "none",
     tags: char.tags || [],
+    importedCard: char.importedCard,
     wechatID: char.wechatID || "",
     timeZone: char.timeZone || "",
     polaroidStyle: char.polaroidStyle ?? 0,
@@ -180,13 +174,18 @@ export function parseCharacterFromJson(
       return null;
     }
 
-    const src = (obj.schema === "ai_phone_character" && typeof obj.data === "object" && obj.data !== null)
+    if (!obj || typeof obj !== "object") return null;
+    const isTavern = obj.spec === "chara_card_v2" || obj.spec === "chara_card_v3" || "first_mes" in obj || "mes_example" in obj || "scenario" in obj || "character_book" in obj;
+    const src = ((obj.schema === "ai_phone_character" || isTavern) && typeof obj.data === "object" && obj.data !== null)
       ? obj.data as Record<string, unknown>
       : obj;
 
-    if (UNSUPPORTED_CHARACTER_IMPORT_FIELDS.some((field) => field in src || field in obj)) {
-      throw new Error(CHAR_BLOCKED_FIELDS);
-    }
+    if (typeof src.name !== "string" || !src.name.trim()) return null;
+    const importedCard = isTavern ? obj : (src.importedCard as Record<string, unknown> | undefined);
+    const persona = [String(src.description ?? src.persona ?? ""),
+      ...(isTavern && typeof src.scenario === "string" && src.scenario.trim() ? [`【场景背景】\n${src.scenario}`] : []),
+      ...(isTavern && typeof src.mes_example === "string" && src.mes_example.trim() ? [`【对话风格示例】\n${src.mes_example}`] : []),
+    ].filter(Boolean).join("\n\n");
 
     const polaroidStyle = typeof src.polaroidStyle === "number" && Number.isFinite(src.polaroidStyle)
       ? Math.max(0, Math.min(4, Math.round(src.polaroidStyle)))
@@ -206,7 +205,8 @@ export function parseCharacterFromJson(
 
     return {
       name: String(src.name ?? ""),
-      persona: String(src.description ?? src.persona ?? ""),
+      persona,
+      importedCard,
       avatar: validAvatar(src.avatar),
       personality: typeof src.personality === "string" && src.personality.trim() ? src.personality : undefined,
       tags: Array.isArray(src.tags) ? src.tags.map(String) : [],
@@ -237,6 +237,7 @@ function readPngTextChunk(u8: Uint8Array, keyword: string): string | null {
 
   while (offset + 12 <= u8.length) {
     const length = dv.getUint32(offset);
+    if (offset + 12 + length > u8.length) return null;
     const type = String.fromCharCode(
       u8[offset + 4],
       u8[offset + 5],
@@ -289,7 +290,8 @@ export function parseCharacterFromPng(
   buffer: ArrayBuffer
 ): CharacterImportData | null {
   const u8 = new Uint8Array(buffer);
-  const charaBase64 = readPngTextChunk(u8, "ai_phone_character");
+  const charaBase64 = readPngTextChunk(u8, "ai_phone_character")
+    || readPngTextChunk(u8, "ccv3") || readPngTextChunk(u8, "chara");
   if (!charaBase64) return null;
 
   try {
@@ -432,6 +434,7 @@ export async function exportCharacterAsPng(char: Character): Promise<void> {
     personality: char.personality || "",
     avatar: "none",
     tags: char.tags || [],
+    importedCard: char.importedCard,
     wechatID: char.wechatID || "",
     timeZone: char.timeZone || "",
   };

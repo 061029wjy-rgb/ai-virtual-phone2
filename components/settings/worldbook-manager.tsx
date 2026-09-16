@@ -10,6 +10,7 @@ import {
     loadBindingConfig,
     UNSUPPORTED_IMPORT_FORMAT,
 } from "@/lib/settings-storage";
+import { ReorderHandle, moveItem } from "@/components/ui/reorder-handle";
 import { loadCharacters } from "@/lib/character-storage";
 import type { WorldBookConfig, WorldBookEntry } from "@/lib/settings-types";
 import { SettingsContext } from "../phone-settings-app";
@@ -298,6 +299,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                 if (parsed) {
                     persist([parsed, ...books]);
                     setActiveBookId(parsed.id);
+                    setViewMode("detail");
                 } else {
                     setImportError("无法解析世界书文件，格式不正确。");
                 }
@@ -458,7 +460,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
 
     const updateEntry = (uid: string, updates: Partial<WorldBookEntry>) => {
         if (!activeBook) return;
-        const newEntries = activeBook.entries.map(e => e.uid === uid ? { ...e, ...updates } : e);
+        const newEntries = activeBook.entries.map(e => e.uid === uid ? { ...e, ...updates, ...(updates.key !== undefined ? { keys: undefined } : {}) } : e);
         updateBook(activeBook.id, { entries: newEntries });
     };
 
@@ -498,6 +500,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                             {books.map(book => (
                                 <div
                                     key={book.id}
+                                    data-sort-group="worldbooks" data-sort-id={book.id}
                                     className="ui-config-card min-w-0 cursor-pointer"
                                     style={{ aspectRatio: "3 / 2", padding: "12px", justifyContent: "space-between" }}
                                     role="button"
@@ -515,6 +518,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                 >
                                     <div className="min-w-0 flex flex-col gap-1.5">
                                         <div className="min-w-0 flex items-center gap-[6px]">
+                                            <ReorderHandle group="worldbooks" id={book.id} ids={books.map(b => b.id)} onMove={(from, to) => persist(moveItem(books, from, to))} />
                                             <BookOpen size={16} className="shrink-0" />
                                             <span className="truncate text-[calc(14.4px*var(--app-text-scale,1))] font-bold leading-tight text-[var(--c-text-title)]">{book.name}</span>
                                         </div>
@@ -582,6 +586,8 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                             <div className="flex flex-col gap-4 mt-2">
                             <h2 className="mx-2 mb-0 mt-2 ts-20 font-bold leading-none text-black">Worldbook Entries ({activeBook.entries?.length || 0})</h2>
 
+                            {activeBook.importWarnings?.map(warning => <p key={warning} className="menu-desc" role="status">{warning}</p>)}
+                            <p className="menu-desc">拖动条目左侧手柄调整顺序；同一插入位置内按此顺序发送。</p>
                             {/* Entry Cards */}
                             <div className="flex flex-col gap-2">
                                 {visibleEntries.length === 0 ? (
@@ -650,6 +656,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                                 }
                                             >
                                             <div
+                                                data-sort-group="worldbook-entries" data-sort-id={entry.uid}
                                                 className="ui-entry-card"
                                                 data-active={isEditing ? "true" : undefined}
                                                 data-disabled={entry.disable && !isEditing ? "true" : undefined}
@@ -657,6 +664,11 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                             >
                                                 {/* Summary Row */}
                                                 <div className="flex justify-between items-start">
+                                                    <ReorderHandle group="worldbook-entries" id={entry.uid} ids={visibleEntries.map(e => e.uid)} onMove={(from, to) => {
+                                                        const moved = moveItem(activeBook.entries, from, to);
+                                                        if (moved === activeBook.entries) return;
+                                                        updateBook(activeBook.id, { entries: moved.map((item, index) => ({ ...item, insertion_order: index * 10 })) });
+                                                    }} />
                                                     <button
                                                         onClick={() => {
                                                             if (swipe.consumeClickSuppression()) return;

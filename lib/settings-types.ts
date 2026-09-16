@@ -1,4 +1,5 @@
 export type SettingItemMeta = {
+    displayOrder?: number; // Persist list order independently of IndexedDB primary keys.
     id: string;
     name: string;
     description?: string;
@@ -10,6 +11,13 @@ export type SettingItemMeta = {
 export type WorldBookEntry = {
     uid: string;
     key: string;
+    keys?: string[];
+    secondaryKeys?: string[];
+    selectiveLogic?: number;
+    selective?: boolean;
+    caseSensitive?: boolean;
+    matchWholeWords?: boolean;
+    originalData?: Record<string, unknown>;
     content: string;
     comment: string;
     use_regex: boolean;
@@ -25,6 +33,8 @@ export type WorldBookEntry = {
 
 export type WorldBookConfig = SettingItemMeta & {
     entries: WorldBookEntry[];
+    importWarnings?: string[];
+    originalData?: Record<string, unknown>;
 };
 
 // --- Preset ---
@@ -143,6 +153,10 @@ export type RegexConfig = SettingItemMeta & {
 
 // --- ApiConfig (migrated from api-settings.tsx) ---
 export type ApiConfig = {
+    protocol?: "auto" | "openai-compatible" | "anthropic" | "gemini";
+    authMode?: "auto" | "none";
+    serverProxy?: boolean;
+    customHeaders?: Record<string, string>;
     id: string;
     name?: string;
     provider: string;
@@ -157,6 +171,7 @@ export type ApiConfig = {
 
 // --- VoiceApiConfig (migrated from voice-settings.tsx) ---
 export type VoiceApiConfig = {
+    transport?: "server" | "direct";
     id: string;
     name?: string;
     provider: string;

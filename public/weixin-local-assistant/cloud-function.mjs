@@ -1120,11 +1120,11 @@ function buildChatCompletionRequest(apiConfig, preset, messages) {
   const baseUrl = determineBaseUrl(apiConfig);
   const apiKey = String(apiConfig.apiKey || "").trim();
   const model = String(apiConfig.defaultModel || "").trim();
-  if (!baseUrl || !apiKey || !model) throw new Error("runtime_missing_api_config: 请检查角色绑定的 API 配置并重新同步运行包");
-  if (apiConfig.provider === "Anthropic" && !apiConfig.baseUrl) {
+  if (!baseUrl || (!apiKey && apiConfig.authMode !== "none") || !model) throw new Error("runtime_missing_api_config: 请检查角色绑定的 API 配置并重新同步运行包");
+  if (apiConfig.protocol === "anthropic" || ((!apiConfig.protocol || apiConfig.protocol === "auto") && apiConfig.provider === "Anthropic" && !apiConfig.baseUrl)) {
     throw new Error("local_auto_reply_provider_not_supported: 暂不支持直连 Anthropic，请使用 OpenAI 兼容中转或自定义 API");
   }
-  if (apiConfig.provider === "Google" && !apiConfig.baseUrl) {
+  if (apiConfig.protocol === "gemini" || ((!apiConfig.protocol || apiConfig.protocol === "auto") && apiConfig.provider === "Google" && !apiConfig.baseUrl)) {
     throw new Error("local_auto_reply_provider_not_supported: 暂不支持直连 Google Gemini，请使用 OpenAI 兼容中转或自定义 API");
   }
 
@@ -1144,13 +1144,13 @@ function buildChatCompletionRequest(apiConfig, preset, messages) {
   if (Number(preset?.min_p) > 0) body.min_p = Number(preset.min_p);
   if (Number(preset?.top_a) > 0) body.top_a = Number(preset.top_a);
 
-  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+  const headers = { "Content-Type": "application/json", ...(apiConfig.authMode !== "none" && apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) };
   if (baseUrl.includes("openrouter.ai")) {
     headers["HTTP-Referer"] = "https://aivirtualphone.local";
     headers["X-Title"] = "AI Virtual Phone";
   }
 
-  return { url: buildChatCompletionsUrl(baseUrl), headers, body };
+  return { url: buildChatCompletionsUrl(baseUrl), headers: { ...headers, ...apiConfig.customHeaders }, body };
 }
 
 function determineBaseUrl(apiConfig) {
@@ -1165,6 +1165,10 @@ function determineBaseUrl(apiConfig) {
     case "Zhipu": return "https://open.bigmodel.cn/api/paas/v4";
     case "SiliconFlow": return "https://api.siliconflow.cn/v1";
     case "TogetherAI": return "https://api.together.xyz/v1";
+    case "Mistral": return "https://api.mistral.ai/v1";
+    case "xAI": return "https://api.x.ai/v1";
+    case "Ollama": return "http://localhost:11434/v1";
+    case "LMStudio": return "http://localhost:1234/v1";
     case "Anthropic": return "https://api.anthropic.com/v1";
     case "Google": return "https://generativelanguage.googleapis.com/v1beta";
     default: return "";

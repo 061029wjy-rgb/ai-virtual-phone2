@@ -1,4 +1,5 @@
 "use client";
+import { importCharacterWorldBook } from "@/lib/character-worldbook-import";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Character } from "@/lib/character-types";
@@ -327,7 +328,7 @@ export function PhoneCharacterApp({ onClose, onNotice }: PhoneCharacterAppProps)
                 newChar.polaroidStyle = pendingPolaroidStyle;
                 setPendingPlacementChar(newChar);
                 setView({ type: "list", id: null, isEditing: false });
-                onNotice("点击画布放置角色");
+                onNotice(data.importedCard ? "角色卡已读取，点击画布放置；开场白等原始字段保留，聊天沿用小手机规则" : "点击画布放置角色");
               }
             }}
             onRestoreVersion={(version) => {
@@ -768,6 +769,7 @@ function CharListView({
           canvasRot: (Math.random() * 20) - 10,
           canvasZIndex: 100 + characters.length,
         };
+        importCharacterWorldBook(charWithCoords);
         onUpdateChars([...characters, charWithCoords]);
         onPlacementDone(charWithCoords);
         onNotice("已放置角色");
@@ -933,7 +935,7 @@ function CharListView({
         const c = createCharacter(data);
         c.polaroidStyle = styleIdx;
         onStartCharPlacement(c);
-        onNotice("点击画布放置角色");
+        onNotice(data.importedCard ? "角色卡已读取，点击画布放置；开场白等原始字段保留，聊天沿用小手机规则" : "点击画布放置角色");
       } else if (file.type === "image/png" || file.name.endsWith(".png")) {
         const buffer = await file.arrayBuffer();
         const data = parseCharacterFromPng(buffer);
@@ -950,7 +952,7 @@ function CharListView({
         const c = createCharacter({ ...data, avatar });
         c.polaroidStyle = styleIdx;
         onStartCharPlacement(c);
-        onNotice("点击画布放置角色");
+        onNotice(data.importedCard ? "角色卡已读取，点击画布放置；开场白等原始字段保留，聊天沿用小手机规则" : "点击画布放置角色");
       } else {
         onNotice("请选择 .json 或 .png 文件");
       }

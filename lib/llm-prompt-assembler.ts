@@ -1299,28 +1299,29 @@ function resolveWorldBookDepth(entry: WorldBookEntry): number {
 }
 
 export function isWorldBookEntryActivated(entry: WorldBookEntry, contextText: string): boolean {
-    if (entry.constant) return true;
-
-    // Key string is usually comma separated
-    const keys = entry.key.split(",").map(k => k.trim()).filter(Boolean);
-    if (keys.length === 0) return false;
-
-    let keyMatch = false;
-    if (entry.use_regex) {
-        keyMatch = keys.some(k => {
-            try {
-                const regex = new RegExp(k, "i");
-                return regex.test(contextText);
-            } catch {
-                return false;
-            }
-        });
-    } else {
-        const lowerCtx = contextText.toLowerCase();
-        keyMatch = keys.some(k => lowerCtx.includes(k.toLowerCase()));
+    const keys: string[] = entry.keys ?? (Array.isArray(entry.key) ? entry.key : String(entry.key ?? "").split(",").map(k => k.trim()).filter(Boolean));
+    const matches = (key: string): boolean => {
+        const literal = key.match(/^\/(.*)\/([dgimsuvy]*)$/s);
+        if (literal || entry.use_regex) {
+            try { return new RegExp(literal ? literal[1] : key, literal ? literal[2] : (entry.caseSensitive ? "" : "i")).test(contextText); }
+            catch { return false; }
+        }
+        const text = entry.caseSensitive ? contextText : contextText.toLowerCase();
+        const term = entry.caseSensitive ? key : key.toLowerCase();
+        if (!term) return false;
+        if (!entry.matchWholeWords) return text.includes(term);
+        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`(?:^|[^\\p{L}\\p{N}_])${escaped}(?=$|[^\\p{L}\\p{N}_])`, "u").test(text);
+    };
+    if (!entry.constant) {
+        if (!keys.some(matches)) return false;
+        const secondary = entry.secondaryKeys || [];
+        if (entry.selective !== false && secondary.length) {
+            const any = secondary.some(matches), all = secondary.every(matches);
+            const passes = entry.selectiveLogic === 1 ? !all : entry.selectiveLogic === 2 ? !any : entry.selectiveLogic === 3 ? all : any;
+            if (!passes) return false;
+        }
     }
-
-    if (!keyMatch) return false;
 
     // Probability gate: if useProbability is enabled, roll a random check
     if (entry.useProbability && typeof entry.probability === "number" && entry.probability < 100) {

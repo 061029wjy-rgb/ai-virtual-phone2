@@ -24,6 +24,10 @@ class SettingsDatabase extends Dexie {
 
 const settingsDb = new SettingsDatabase();
 
+function restoreDisplayOrder<T extends { displayOrder?: number }>(items: T[]): T[] {
+    return [...items].sort((a, b) => (a.displayOrder ?? Number.MAX_SAFE_INTEGER) - (b.displayOrder ?? Number.MAX_SAFE_INTEGER));
+}
+
 // ── localStorage keys (for migration) ──
 
 const LS_PRESETS_KEY = "ai_phone_presets_v1";
@@ -68,8 +72,8 @@ export async function hydrateSettingsDb(): Promise<void> {
                     settingsDb.worldBooks.toArray(),
                     settingsDb.regexes.toArray(),
                 ]);
-                _presets = presets;
-                _worldBooks = worldBooks;
+                _presets = restoreDisplayOrder(presets);
+                _worldBooks = restoreDisplayOrder(worldBooks);
                 _regexes = regexes;
                 _hydrated = true;
                 console.log(`[SettingsDB] Migration flag missing but IndexedDB has data; reusing it: ${presets.length} presets, ${worldBooks.length} worldBooks, ${regexes.length} regexes`);
@@ -113,8 +117,8 @@ export async function hydrateSettingsDb(): Promise<void> {
                 settingsDb.worldBooks.toArray(),
                 settingsDb.regexes.toArray(),
             ]);
-            _presets = presets;
-            _worldBooks = worldBooks;
+            _presets = restoreDisplayOrder(presets);
+            _worldBooks = restoreDisplayOrder(worldBooks);
             _regexes = regexes;
             console.log(`[SettingsDB] Loaded: ${presets.length} presets, ${worldBooks.length} worldBooks, ${regexes.length} regexes`);
         } catch (err) {
@@ -165,7 +169,8 @@ function enqueuePresetsPersist(presets: PresetConfig[], warnInQueue: boolean): P
 }
 
 export function writePresetsCache(presets: PresetConfig[]): void {
-    _presets = presets;
+    presets = presets.map((item, displayOrder) => ({ ...item, displayOrder }));
+    _presets = restoreDisplayOrder(presets);
     if (!_hydrated && typeof window !== "undefined") {
         console.warn("[SettingsDB] writePresetsCache before hydration; using additive write to avoid replacing existing presets.");
         settingsDb.presets.bulkPut(presets).catch(err => console.warn("[SettingsDB] additive save presets failed:", err));
@@ -175,7 +180,8 @@ export function writePresetsCache(presets: PresetConfig[]): void {
 }
 
 export async function writePresetsCacheAsync(presets: PresetConfig[]): Promise<void> {
-    _presets = presets;
+    presets = presets.map((item, displayOrder) => ({ ...item, displayOrder }));
+    _presets = restoreDisplayOrder(presets);
     if (!_hydrated && typeof window !== "undefined") {
         console.warn("[SettingsDB] writePresetsCacheAsync before hydration; using additive write to avoid replacing existing presets.");
         await settingsDb.presets.bulkPut(presets);
@@ -190,6 +196,7 @@ export async function writePresetsCacheAsync(presets: PresetConfig[]): Promise<v
 }
 
 export function writeWorldBooksCache(books: WorldBookConfig[]): void {
+    books = books.map((item, displayOrder) => ({ ...item, displayOrder }));
     _worldBooks = books;
     if (!_hydrated && typeof window !== "undefined") {
         console.warn("[SettingsDB] writeWorldBooksCache before hydration; using additive write to avoid replacing existing worldBooks.");

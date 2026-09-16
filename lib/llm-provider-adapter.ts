@@ -244,7 +244,7 @@ export function buildProviderRequest(
 ): LlmRequestPayload {
     const baseUrl = determineBaseUrl(config);
     if (!baseUrl) throw new Error(`API 地址无效：provider=${config.provider}`);
-    if (!config.apiKey) throw new Error(`API Key 为空：provider=${config.provider}`);
+    if (!config.apiKey.trim() && config.authMode !== "none") throw new Error(`API Key 为空：provider=${config.provider}`);
 
     const nativeToolProtocol = options.tools && options.tools.length > 0 ? nativeToolProtocolForConfig(config) : null;
     const providerKind = providerKindForConfig(config, { nativeToolProtocol });
@@ -546,6 +546,7 @@ function buildOpenAICompatibleRequest(
         body,
         providerKind: "openai-compatible",
         messagesForLog: messages.map(messageForLog),
+        serverProxy: config.serverProxy,
     };
 }
 
@@ -596,6 +597,7 @@ function buildAnthropicRequest(
         body,
         providerKind: "anthropic",
         messagesForLog: messages.map(messageForLog),
+        serverProxy: config.serverProxy,
     };
 }
 
@@ -682,6 +684,7 @@ function buildGeminiRequest(
         body,
         providerKind: "gemini",
         messagesForLog: messages.map(messageForLog),
+        serverProxy: config.serverProxy,
     };
 }
 

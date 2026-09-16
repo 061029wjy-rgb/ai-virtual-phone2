@@ -5,7 +5,7 @@ import { Plus, Play, Pause, AlertCircle, RefreshCw, FileEdit, Trash2, X, Check, 
 import { SettingsContext } from "../phone-settings-app";
 import type { VoiceApiConfig } from "@/lib/settings-types";
 import { loadVoiceConfigs, saveVoiceConfigs } from "@/lib/settings-storage";
-import { synthesizeSpeech } from "@/lib/tts-service";
+import { synthesizeSpeech, unlockAudioPlayback, playAudioBlobViaMediaElement } from "@/lib/tts-service";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
@@ -198,9 +198,7 @@ function normalizeVoiceConfigs(configs: VoiceApiConfig[]): VoiceApiConfig[] {
         .filter(config => SUPPORTED_VOICE_PROVIDERS.has(config.provider))
         .map(config => {
             if (config.provider !== "Minimax") return config;
-            const baseUrl = MINIMAX_BASE_URL_OPTIONS.some(option => option.baseUrl === config.baseUrl)
-                ? config.baseUrl
-                : DEFAULT_MINIMAX_BASE_URL;
+            const baseUrl = config.baseUrl?.trim() || DEFAULT_MINIMAX_BASE_URL;
             const speechSpeed = typeof config.speechSpeed === "number" && Number.isFinite(config.speechSpeed)
                 ? Math.min(MINIMAX_SPEED_MAX, Math.max(MINIMAX_SPEED_MIN, config.speechSpeed))
                 : DEFAULT_SPEECH_SPEED;
@@ -240,7 +238,9 @@ export function VoiceSettings() {
     const [manualModelIds, setManualModelIds] = useState<Record<string, boolean>>({});
     const [manualVoiceIds, setManualVoiceIds] = useState<Record<string, boolean>>({});
     const [isLoaded, setIsLoaded] = useState(false);
-    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const previewAbortRef = useRef<(() => void) | null>(null);
+    const previewGenerationRef = useRef(0);
+    useEffect(() => () => { previewGenerationRef.current++; previewAbortRef.current?.(); }, []);
 
     // Fetching states for Voices
     const [isFetching, setIsFetching] = useState<Record<string, boolean>>({});
@@ -512,20 +512,11 @@ export function VoiceSettings() {
     };
 
     const togglePreview = async (config: VoiceApiConfig) => {
-        if (playingVoiceId === config.id) {
-            if (audioRef.current) {
-                audioRef.current.pause();
-                audioRef.current = null;
-            }
-            setPlayingVoiceId(null);
-            return;
-        }
-
-        if (audioRef.current) {
-            audioRef.current.pause();
-            audioRef.current = null;
-        }
-
+        const generation = ++previewGenerationRef.current;
+        previewAbortRef.current?.();
+        previewAbortRef.current = null;
+        if (playingVoiceId === config.id) { setPlayingVoiceId(null); return; }
+        unlockAudioPlayback();
         setPlayingVoiceId(config.id);
 
         try {
@@ -537,23 +528,17 @@ export function VoiceSettings() {
                 config,
             );
             if (!blob) throw new Error("当前语音配置未返回真实音频");
-            const url = URL.createObjectURL(blob);
-
-            const audio = new Audio(url);
-            audioRef.current = audio;
-            audio.onended = () => {
+            if (generation !== previewGenerationRef.current) return;
+            const playback = playAudioBlobViaMediaElement(blob, true);
+            previewAbortRef.current = playback.abort;
+            await playback.promise;
+            if (generation === previewGenerationRef.current) {
                 setPlayingVoiceId(null);
-                audioRef.current = null;
-                URL.revokeObjectURL(url);
-            };
-            audio.onerror = () => {
-                setPlayingVoiceId(null);
-                audioRef.current = null;
-                URL.revokeObjectURL(url);
-            };
-            await audio.play();
+                previewAbortRef.current = null;
+            }
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e);
+            if (generation !== previewGenerationRef.current) return;
             alert(`语音测试失败: ${msg}`);
             setPlayingVoiceId(null);
         }
@@ -677,6 +662,17 @@ export function VoiceSettings() {
                                                 placeholder="输入密钥..."
                                             />
                                         </div>
+                                        {config.provider === "Minimax" && <div className="flex flex-col gap-2">
+                                            <label className="menu-desc">MiniMax 接口地址</label>
+                                            <Input value={config.baseUrl || DEFAULT_MINIMAX_BASE_URL} onChange={e => updateConfig(config.id, { baseUrl: e.target.value })} />
+                                            <label className="menu-desc">语音请求方式</label>
+                                            <select className="ui-select" value={config.transport || "auto"} onChange={e => updateConfig(config.id, { transport: e.target.value === "auto" ? undefined : e.target.value as "server" | "direct" })}>
+                                                <option value="auto">自动（官方地址走服务端）</option>
+                                                <option value="server">服务端转发</option>
+                                                <option value="direct">浏览器直连</option>
+                                            </select>
+                                            <p className="menu-desc">国内与海外账户请选择对应地址和密钥。试听会实际合成一段语音；若部署平台限制请求时长，可尝试直连。</p>
+                                        </div>}
                                         {config.provider === "OpenAI" && (
                                             <>
                                                 <div className="flex flex-col gap-1">
@@ -888,6 +884,7 @@ export function VoiceSettings() {
                                                         })()
                                                     )}
                                                     <button
+                                                        aria-label={playingVoiceId === config.id ? "停止试听" : "试听语音"}
                                                         onClick={() => togglePreview(config)}
                                                         className="ui-icon-btn"
                                                         data-active={playingVoiceId === config.id}

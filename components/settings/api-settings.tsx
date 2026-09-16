@@ -9,7 +9,8 @@ import { generateEmbedding, isEmbeddingModelName } from "@/lib/memory-embedding"
 import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
-import { determineBaseUrl, simpleLLMCall } from "@/lib/api-helpers";
+import { fetchModel } from "@/lib/model-transport";
+import { determineBaseUrl, simpleLLMCall, buildRequestHeaders, isNativeGoogleApi, isNativeAnthropicApi } from "@/lib/api-helpers";
 
 const DEFAULT_CONFIGS: ApiConfig[] = [
     {
@@ -26,8 +27,8 @@ const DEFAULT_CONFIGS: ApiConfig[] = [
 ];
 
 function getNativeToolProtocolLabel(config: ApiConfig): string {
-    if (config.provider === "Anthropic" && !config.baseUrl) return "Anthropic";
-    if (config.provider === "Google") return "Gemini";
+    if (isNativeAnthropicApi(config)) return "Anthropic";
+    if (isNativeGoogleApi(config)) return "Gemini";
     return "OpenAI-compatible";
 }
 
@@ -117,11 +118,11 @@ export function ApiSettings() {
         try {
             const baseUrl = determineBaseUrl(config);
             if (!baseUrl) throw new Error("缺少 Base URL");
-            if (!config.apiKey) throw new Error("缺少 API Key");
+            if (!config.apiKey.trim() && config.authMode !== "none") throw new Error("缺少 API Key");
 
             // Gemini 原生协议（/v1beta）：URL 用 ?key= 鉴权，响应是 { models: [{ name }] }
             // OpenAI 兼容（/v1）：Authorization: Bearer + 响应是 { data: [{ id }] }
-            const isGoogleNative = config.provider === "Google";
+            const isGoogleNative = isNativeGoogleApi(config);
             // 用户常把完整端点填进 Base URL（如 .../v1/embeddings、.../v1/chat/completions），
             // 拼 /models 前剥掉这类端点后缀；已以 /models 结尾则原样使用。
             const modelsBase = baseUrl
@@ -131,10 +132,10 @@ export function ApiSettings() {
             const url = isGoogleNative
                 ? `${modelsUrl}?key=${encodeURIComponent(config.apiKey)}`
                 : modelsUrl;
-            const headers: Record<string, string> = { "Content-Type": "application/json" };
-            if (!isGoogleNative) headers["Authorization"] = `Bearer ${config.apiKey}`;
+            const headers = buildRequestHeaders(config, baseUrl);
+            if (isGoogleNative) delete headers.Authorization;
 
-            const response = await fetch(url, { method: "GET", headers });
+            const response = await fetchModel(url, { method: "GET", headers }, config.serverProxy);
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
@@ -309,7 +310,7 @@ export function ApiSettings() {
                                             <label className="menu-desc ml-1">服务商 (Provider)</label>
                                             <select
                                                 value={config.provider}
-                                                onChange={(e) => updateConfig(config.id, { provider: e.target.value })}
+                                                onChange={(e) => updateConfig(config.id, { provider: e.target.value, protocol: e.target.value === "Anthropic" ? "anthropic" : e.target.value === "Google" ? "gemini" : "openai-compatible", authMode: ["Ollama", "LMStudio"].includes(e.target.value) ? "none" : "auto" })}
                                                 className="ui-select"
                                             >
                                                 <option value="OpenAI">OpenAI</option>
@@ -322,10 +323,35 @@ export function ApiSettings() {
                                                 <option value="Zhipu">Zhipu (GLM)</option>
                                                 <option value="SiliconFlow">SiliconFlow</option>
                                                 <option value="TogetherAI">Together AI</option>
+                                                <option value="Mistral">Mistral</option>
+                                                <option value="xAI">xAI</option>
+                                                <option value="Ollama">Ollama（兼容接口）</option>
+                                                <option value="LMStudio">LM Studio（兼容接口）</option>
                                                 <option value="Custom">自定义 (Custom)</option>
                                             </select>
                                         </div>
 
+                                        <div className="flex flex-col gap-2">
+                                            <label className="menu-desc">接口协议（与模型名称无关）</label>
+                                            <select className="ui-select" value={config.protocol || "auto"} onChange={e => updateConfig(config.id, { protocol: e.target.value as ApiConfig["protocol"] })}>
+                                                <option value="auto">沿用原有配置</option>
+                                                <option value="openai-compatible">OpenAI 兼容聊天接口</option>
+                                                <option value="anthropic">Anthropic Messages（支持中转）</option>
+                                                <option value="gemini">Gemini 原生接口（支持中转）</option>
+                                            </select>
+                                            <label className="menu-desc"><input type="checkbox" checked={config.authMode === "none"} onChange={e => updateConfig(config.id, { authMode: e.target.checked ? "none" : "auto" })} /> 无需 API Key（本地服务）</label>
+                                            <label className="menu-desc"><input type="checkbox" checked={config.serverProxy === true} onChange={e => updateConfig(config.id, { serverProxy: e.target.checked })} /> 服务端转发（解决浏览器跨域）</label>
+                                            <p className="menu-desc">本地模型使用直连。自定义中转若使用服务端转发，需要部署者将域名加入 MODEL_PROXY_ALLOWED_HOSTS。模型可以直接手填，不依赖拉取列表。</p>
+                                            <details><summary className="menu-desc">自定义请求头</summary>
+                                                <textarea className="ui-textarea" key={`${config.id}-headers`} defaultValue={JSON.stringify(config.customHeaders || {}, null, 2)} onBlur={e => {
+                                                    try {
+                                                        const headers = JSON.parse(e.target.value || "{}");
+                                                        if (!headers || Array.isArray(headers) || typeof headers !== "object" || Object.values(headers).some(v => typeof v !== "string")) throw new Error("请求头必须是 JSON 字符串键值对象");
+                                                        updateConfig(config.id, { customHeaders: headers });
+                                                    } catch { setTestResult(prev => ({ ...prev, [config.id]: { success: false, message: "请求头 JSON 格式不正确，未保存" } })); }
+                                                }} />
+                                            </details>
+                                        </div>
                                         {/* Custom 必填 Base URL；其他 provider 可选填中转站地址 */}
                                         <div className="flex flex-col gap-1">
                                             <label className="menu-desc ml-1">

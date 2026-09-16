@@ -61,22 +61,6 @@ function isUnsupportedPresetFormat(obj: Record<string, unknown>): boolean {
     return UNSUPPORTED_PRESET_FIELDS.some(f => f in obj);
 }
 
-/** World book shapes with unsupported root/entry fields. */
-const UNSUPPORTED_WB_ROOT_FIELDS = ["recursiveScan", "caseSensitive", "originalData", "globalSelect"];
-const UNSUPPORTED_WB_ENTRY_FIELDS = ["selectiveLogic", "secondary_keys", "extensions", "characterFilter", "vectorized"];
-
-function isUnsupportedWorldBookFormat(obj: Record<string, unknown>): boolean {
-    // Root-level external fields
-    if (UNSUPPORTED_WB_ROOT_FIELDS.some(f => f in obj)) return true;
-    // Dictionary entries are treated as unsupported import format
-    if (obj.entries && typeof obj.entries === "object" && !Array.isArray(obj.entries)) return true;
-    // Check entry-level external fields
-    const entries = Array.isArray(obj.entries) ? obj.entries : (obj.entries && typeof obj.entries === "object" ? Object.values(obj.entries) : []);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (entries.length > 0 && entries.some((e: any) => e && UNSUPPORTED_WB_ENTRY_FIELDS.some(f => f in e))) return true;
-    return false;
-}
-
 // --- Keys ---
 const API_CONFIGS_KEY = "ai_phone_api_configs_v1";
 const VOICE_CONFIGS_KEY = "ai_phone_voice_configs_v1";
@@ -432,30 +416,31 @@ export function createWorldBook(name: string): WorldBookConfig {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function parseWorldBookEntry(e: any): WorldBookEntry {
-    // Resolve key: support arrays, strings, and fallback field names
-    let key = "";
-    if (Array.isArray(e.key)) {
-        key = e.key.join(",");
-    } else {
-        key = String(e.key ?? e.keysecondary ?? e.keyword ?? e.keys?.join(",") ?? "");
-    }
-    // Merge disable/disabled/enabled: entry is disabled if disable=true OR enabled=false
-    const isDisabled = Boolean(e.disable || e.disabled || false) || (e.enabled === false);
+export function parseWorldBookEntry(e: any): WorldBookEntry {
+    const ext = e.extensions || {};
+    const keys = Array.isArray(e.key) ? e.key.map(String) : Array.isArray(e.keys) ? e.keys.map(String) : String(e.key ?? e.keyword ?? "").split(",").map((k: string) => k.trim()).filter(Boolean);
+    const secondary = e.keysecondary ?? e.secondary_keys ?? [];
+    const number = (value: unknown, fallback: number) => value != null && value !== "" && Number.isFinite(Number(value)) ? Number(value) : fallback;
+    const position = ext.position ?? e.position ?? "before_char";
     return {
-        uid: e.uid ? String(e.uid) : String(e.id || generateId("wb-entry")),
-        key,
-        content: String(e.content ?? ""),
-        comment: String(e.comment ?? ""),
-        use_regex: Boolean(e.use_regex || e.isRegex || false),
-        disable: isDisabled,
-        constant: Boolean(e.constant || false),
-        position: e.position !== undefined ? (typeof e.position === "string" && /^\d+$/.test(e.position) ? Number(e.position) : e.position) : "before_char",
-        depth: Number(e.depth) || 0,
-        probability: Number(e.probability) || 100,
-        useProbability: Boolean(e.useProbability || false),
-        role: Number(e.role) || 0,
-        insertion_order: Number(e.order ?? e.insertion_order ?? 50),
+        uid: String(e.uid ?? e.id ?? generateId("wb-entry")),
+        key: keys.join(", "), keys,
+        secondaryKeys: Array.isArray(secondary) ? secondary.map(String) : String(secondary).split(",").map(k => k.trim()).filter(Boolean),
+        selective: e.selective !== false,
+        selectiveLogic: number(e.selectiveLogic ?? ext.selectiveLogic, 0),
+        caseSensitive: e.caseSensitive ?? e.case_sensitive ?? ext.case_sensitive ?? false,
+        matchWholeWords: e.matchWholeWords ?? ext.match_whole_words ?? false,
+        content: String(e.content ?? ""), comment: String(e.comment ?? e.name ?? ""),
+        use_regex: Boolean(e.use_regex || e.isRegex),
+        disable: Boolean(e.disable || e.disabled) || e.enabled === false,
+        constant: Boolean(e.constant),
+        position: typeof position === "string" && /^\d+$/.test(position) ? Number(position) : position,
+        depth: number(e.depth ?? ext.depth, 4),
+        probability: Math.max(0, Math.min(100, number(e.probability ?? ext.probability, 100))),
+        useProbability: Boolean(e.useProbability ?? ext.useProbability ?? (e.probability !== undefined)),
+        role: number(e.role ?? ext.role, 0),
+        insertion_order: number(e.order ?? e.insertion_order, 50),
+        originalData: e.originalData ?? e,
     };
 }
 
@@ -464,21 +449,38 @@ export function parseWorldBookFromJson(text: string): WorldBookConfig | null {
         const obj = JSON.parse(text);
         if (!obj || typeof obj !== "object") return null;
 
-        if (isUnsupportedWorldBookFormat(obj)) throw new Error(UNSUPPORTED_IMPORT_FORMAT);
+        if (!obj.entries || typeof obj.entries !== "object") return null;
 
         const wb = createWorldBook(obj.name || "导入的世界书");
+        wb.description = typeof obj.description === "string" ? obj.description : undefined;
+        wb.originalData = obj.originalData ?? obj;
+        wb.importWarnings = Array.isArray(obj.importWarnings) ? obj.importWarnings : [];
+        const advanced = ["recursiveScan", "recursive_scanning", "scan_depth", "scanDepth", "token_budget", "caseSensitive"];
+        if (advanced.some(k => obj[k])) wb.importWarnings!.push("扫描深度、递归和预算沿用小手机规则；原始设置已保留。");
         if (Array.isArray(obj.entries)) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const parsedEntries = obj.entries.map((e: any) => parseWorldBookEntry(e));
+            const parsedEntries = obj.entries.filter((e: any) => e && typeof e === "object").map((e: any) => parseWorldBookEntry(e));
 
             // Note: some formats might use dictionary-shaped entries.
             wb.entries = parsedEntries;
         } else if (typeof obj.entries === "object" && obj.entries !== null) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const parsedEntries = Object.values(obj.entries).map((e: any) => parseWorldBookEntry(e));
+            const parsedEntries = Object.entries(obj.entries).filter(([, e]) => e && typeof e === "object").map(([id, e]) => parseWorldBookEntry({ uid: id, ...(e as object) }));
             wb.entries = parsedEntries;
         }
 
+        const ids = new Set<string>();
+        wb.entries.forEach(entry => {
+            if (ids.has(entry.uid)) entry.uid = generateId("wb-entry");
+            ids.add(entry.uid);
+            const raw = entry.originalData || {};
+            const ext = (raw.extensions || {}) as Record<string, unknown>;
+            if ([2, 3, 5, 6, 7].includes(Number(entry.position)) || ["sticky", "cooldown", "delay", "group", "vectorized", "scanDepth", "characterFilter", "excludeRecursion", "preventRecursion", "delayUntilRecursion"].some(k => raw[k] || ext[k])) {
+                wb.importWarnings!.push("部分高级触发／插入位置沿用小手机规则，未完全复现酒馆；原始设置已保留。");
+            }
+        });
+        wb.entries.sort((a, b) => a.insertion_order - b.insertion_order);
+        wb.importWarnings = [...new Set(wb.importWarnings)];
         return wb;
     } catch (e) {
         if (e instanceof Error && e.message === UNSUPPORTED_IMPORT_FORMAT) throw e;

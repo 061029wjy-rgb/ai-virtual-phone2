@@ -1,6 +1,7 @@
 // lib/memory-embedding.ts
 // Embedding generation + vector/keyword search for memory retrieval.
 
+import { fetchModel } from "./model-transport";
 import type { ApiConfig } from "./settings-types";
 import type { MemoryEntry, MemorySearchResult } from "./memory-types";
 import { determineBaseUrl, buildRequestHeaders } from "./api-helpers";
@@ -48,7 +49,7 @@ export async function generateEmbedding(
 
     const embeddingModel = resolveEmbeddingModel(apiConfig);
     if (!embeddingModel) return fail("该配置无可用向量模型（默认模型名不像向量模型，服务商也无内置映射）");
-    if (!apiConfig.apiKey) return fail("缺少 API Key");
+    if (!apiConfig.apiKey.trim() && apiConfig.authMode !== "none") return fail("缺少 API Key");
 
     const baseUrl = determineBaseUrl(apiConfig);
     if (!baseUrl) return fail("缺少 Base URL");
@@ -60,14 +61,14 @@ export async function generateEmbedding(
     const headers = buildRequestHeaders(apiConfig, baseUrl);
 
     try {
-        const res = await fetch(url, {
+        const res = await fetchModel(url, {
             method: "POST",
             headers,
             body: JSON.stringify({
                 model: embeddingModel,
                 input: text,
             }),
-        });
+        }, apiConfig.serverProxy);
         if (!res.ok) {
             return fail(`API 错误 ${res.status}: ${await res.text()}`);
         }

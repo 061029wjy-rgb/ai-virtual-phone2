@@ -2,6 +2,7 @@
 // Unified API helpers — single source of truth for provider URL resolution,
 // request headers, and response parsing. All LLM-calling modules should use these.
 
+import { fetchModel } from "./model-transport";
 import type { ApiConfig } from "./settings-types";
 import { pushApiLog } from "./api-log-store";
 
@@ -13,7 +14,7 @@ const SIMPLE_ANTHROPIC_AUTO_MAX_TOKENS = 8192;
  * Supports all 11 UI providers + Custom (relies on baseUrl field).
  */
 export function determineBaseUrl(config: { provider: string; baseUrl?: string }): string {
-    if (config.baseUrl) return config.baseUrl;
+    if (config.baseUrl?.trim()) return config.baseUrl.trim().replace(/\/+$/, "").replace(/\/(chat\/completions|messages|embeddings|models)$/, "");
     switch (config.provider) {
         case "OpenAI":      return "https://api.openai.com/v1";
         case "Anthropic":   return "https://api.anthropic.com/v1";
@@ -25,6 +26,10 @@ export function determineBaseUrl(config: { provider: string; baseUrl?: string })
         case "Zhipu":       return "https://open.bigmodel.cn/api/paas/v4";
         case "SiliconFlow": return "https://api.siliconflow.cn/v1";
         case "TogetherAI":  return "https://api.together.xyz/v1";
+        case "Mistral": return "https://api.mistral.ai/v1";
+        case "xAI": return "https://api.x.ai/v1";
+        case "Ollama": return "http://localhost:11434/v1";
+        case "LMStudio": return "http://localhost:1234/v1";
         case "Custom":      return ""; // must be set via baseUrl
         default:            return "";
     }
@@ -50,13 +55,14 @@ export function buildRequestHeaders(config: ApiConfig, baseUrl: string): Record<
         "Content-Type": "application/json",
     };
 
-    if (config.provider === "Anthropic" && !config.baseUrl) {
+    if (isNativeAnthropicApi(config)) {
         // Native Anthropic API uses x-api-key
-        headers["x-api-key"] = config.apiKey;
+        if (config.authMode !== "none" && config.apiKey.trim()) headers["x-api-key"] = config.apiKey.trim();
+        if (!config.serverProxy) headers["anthropic-dangerous-direct-browser-access"] = "true";
         headers["anthropic-version"] = "2023-06-01";
     } else {
         // All others (including Anthropic via proxy/relay) use Bearer token
-        headers["Authorization"] = `Bearer ${config.apiKey}`;
+        if (config.authMode !== "none" && config.apiKey.trim()) headers["Authorization"] = `Bearer ${config.apiKey.trim()}`;
     }
 
     // OpenRouter requires referer headers
@@ -65,6 +71,10 @@ export function buildRequestHeaders(config: ApiConfig, baseUrl: string): Record<
         headers["X-Title"] = "AI Virtual Phone";
     }
 
+    for (const [name, value] of Object.entries(config.customHeaders || {})) {
+        const existing = Object.keys(headers).find(key => key.toLowerCase() === name.toLowerCase());
+        headers[existing || name] = value;
+    }
     return headers;
 }
 
@@ -75,6 +85,7 @@ export function buildRequestHeaders(config: ApiConfig, baseUrl: string): Record<
  * behind OpenAI-compatible endpoints should use Custom provider + baseUrl.
  */
 export function isNativeAnthropicApi(config: ApiConfig): boolean {
+    if (config.protocol && config.protocol !== "auto") return config.protocol === "anthropic";
     return config.provider === "Anthropic" && !config.baseUrl;
 }
 
@@ -87,6 +98,7 @@ export function isNativeGoogleApi(config: ApiConfig): boolean {
     // 之前要求 baseUrl 必须为空才认为是原生 Gemini，这导致中转站（如 dzzi.ai 暴露的 /v1beta 端点）
     // 没法被识别成原生 Gemini，只能走 OpenAI 兼容路径，进而 thoughtSignature 丢失、多轮工具调用失败。
     // 现在只要 provider=Google 就走原生 Gemini 协议；用户填的 baseUrl 由 determineBaseUrl 处理。
+    if (config.protocol && config.protocol !== "auto") return config.protocol === "gemini";
     return config.provider === "Google";
 }
 
@@ -101,7 +113,7 @@ export async function simpleLLMCall(
     options?: { temperature?: number; max_tokens?: number; signal?: AbortSignal; label?: string },
 ): Promise<{ content: string | null; error?: string; finishReason?: string; wasTruncated?: boolean }> {
     const baseUrl = determineBaseUrl(config);
-    if (!baseUrl || !config.apiKey) {
+    if (!baseUrl || (!config.apiKey.trim() && config.authMode !== "none")) {
         return { content: null, error: "API 地址或密钥无效" };
     }
 
@@ -160,7 +172,7 @@ export async function simpleLLMCall(
         const bodyTokenEstimate = Math.ceil(bodySize / 3);
         console.log("[simpleLLMCall] Request:", { url: fetchUrl.slice(0, 80), bodySize, bodyTokenEstimate, model: config.defaultModel });
 
-        const res = await fetch(fetchUrl, { method: "POST", headers, body, signal: options?.signal });
+        const res = await fetchModel(fetchUrl, { method: "POST", headers, body, signal: options?.signal }, config.serverProxy);
 
         if (!res.ok) {
             const errText = await res.text().catch(() => "");

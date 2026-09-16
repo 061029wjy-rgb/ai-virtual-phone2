@@ -30,6 +30,7 @@ import { SettingsContext } from "../phone-settings-app";
 import { BottomSheet, ConfirmDialog, TextExpandModal } from "@/components/ui/modal";
 import { SwipeActionRow, useSwipeActions } from "@/components/ui/swipe-actions";
 import { notifyMascotPageContext } from "@/lib/mascot-events";
+import { ReorderHandle, moveItem } from "@/components/ui/reorder-handle";
 import { useTouchSort } from "@/lib/use-touch-sort";
 
 // ── Tag helpers for backward compat (tags[] > featureTag + followUpOnly) ──
@@ -1100,6 +1101,7 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                             {presets.map(preset => (
                                 <div
                                     key={preset.id}
+                                    data-sort-group="presets" data-sort-id={preset.id}
                                     className="ui-config-card min-w-0 cursor-pointer"
                                     style={{ minHeight: "84px", padding: "16px", justifyContent: "space-between" }}
                                     role="button"
@@ -1117,6 +1119,7 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                 >
                                     <div className="min-w-0 flex flex-col gap-1.5">
                                         <div className="min-w-0 flex items-center gap-[6px]">
+                                            <ReorderHandle group="presets" id={preset.id} ids={presets.map(p => p.id)} onMove={(from, to) => persist(moveItem(presets, from, to))} />
                                             <span className="truncate text-[calc(14.4px*var(--app-text-scale,1))] font-bold leading-tight text-[var(--c-text-title)]">{preset.name}</span>
                                             {preset.builtIn && (
                                                 <span className="ui-badge shrink-0" data-variant="success">内置</span>

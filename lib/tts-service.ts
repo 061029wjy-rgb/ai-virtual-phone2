@@ -1,3 +1,5 @@
+import { fetchModel } from "./model-transport";
+import { minimaxSpeechUrl, decodeMinimaxAudio } from "./minimax-audio";
 // lib/tts-service.ts — 语音合成服务
 
 import type { VoiceApiConfig, ContentAppId } from "./settings-types";
@@ -52,11 +54,11 @@ export async function synthesizeSpeech(
 // toggled the mic. Abort after a ceiling so the caller can recover.
 const TTS_TIMEOUT_MS = 120_000;
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = TTS_TIMEOUT_MS): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = TTS_TIMEOUT_MS, serverProxy = false): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-        return await fetch(url, { ...init, signal: controller.signal });
+        return await fetchModel(url, { ...init, signal: controller.signal }, serverProxy);
     } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") {
             throw new Error(`语音合成超时（超过 ${Math.round(timeoutMs / 1000)} 秒无响应）`);
@@ -71,7 +73,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = TTS_
 
 // MiniMax voice_setting.emotion 支持的取值（speech-01-turbo/hd、speech-02-turbo/hd 等）。
 const MINIMAX_EMOTIONS = new Set([
-    "happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "neutral", "fluent",
+    "happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent",
 ]);
 
 const MINIMAX_SPEED_MIN = 0.5;
@@ -90,9 +92,10 @@ function normalizeMinimaxPitch(pitch: number | undefined): number {
 }
 
 async function synthesizeMinimax(text: string, config: VoiceApiConfig, emotion?: string): Promise<Blob | null> {
-    if (!config.apiKey) throw new Error("Minimax API Key 未配置");
+    if (!config.apiKey.trim()) throw new Error("Minimax API Key 未配置");
 
-    const baseUrl = (config.baseUrl || "https://api.minimaxi.com/v1").replace(/\/$/, "");
+    const url = minimaxSpeechUrl(config.baseUrl);
+    const official = ["api.minimaxi.com", "api.minimax.io", "api-uw.minimax.io"].includes(new URL(url).hostname);
     const voiceSetting: Record<string, unknown> = {
         voice_id: config.defaultVoice || "male-qn-qingse",
         speed: normalizeMinimaxSpeed(config.speechSpeed),
@@ -104,16 +107,17 @@ async function synthesizeMinimax(text: string, config: VoiceApiConfig, emotion?:
         voiceSetting.emotion = normalizedEmotion;
     }
 
-    const response = await fetchWithTimeout(`${baseUrl}/t2a_v2`, {
+    const response = await fetchWithTimeout(url, {
         method: "POST",
         headers: {
-            Authorization: `Bearer ${config.apiKey}`,
+            Authorization: `Bearer ${config.apiKey.trim()}`,
             "Content-Type": "application/json",
         },
         body: JSON.stringify({
             model: config.model || "speech-01-turbo",
             text,
             stream: false,
+            output_format: "hex",
             ...(config.languageBoost ? { language_boost: config.languageBoost } : {}),
             voice_setting: voiceSetting,
             // 44100/256k 是 Minimax 支持的最高档;之前 32000/128k 会把 hd 模型
@@ -125,24 +129,15 @@ async function synthesizeMinimax(text: string, config: VoiceApiConfig, emotion?:
                 channel: 1,
             },
         }),
-    });
+    }, TTS_TIMEOUT_MS, config.transport === "server" || (config.transport !== "direct" && official));
 
     if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        throw new Error(err.base_resp?.status_msg || `Minimax API 请求失败 (${response.status})`);
+        throw new Error(err.base_resp?.status_msg || err.error?.message || `Minimax API 请求失败 (${response.status})`);
     }
 
     const data = await response.json();
-    if (data.data?.audio) {
-        const hexString: string = data.data.audio;
-        const bytes = new Uint8Array(hexString.length / 2);
-        for (let i = 0; i < hexString.length; i += 2) {
-            bytes[i / 2] = parseInt(hexString.substring(i, i + 2), 16);
-        }
-        return new Blob([bytes], { type: "audio/mpeg" });
-    }
-
-    throw new Error(data.base_resp?.status_msg || "Minimax 未返回音频数据");
+    return decodeMinimaxAudio(data);
 }
 
 // ── OpenAI TTS ──────────────────────────────────────
@@ -154,7 +149,7 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig): Promise<B
     const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, "")}/audio/speech`, {
         method: "POST",
         headers: {
-            Authorization: `Bearer ${config.apiKey}`,
+            Authorization: `Bearer ${config.apiKey.trim()}`,
             "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -348,11 +343,11 @@ function decodeAudio(ctx: AudioContext, data: ArrayBuffer): Promise<AudioBuffer>
  * keep-alive on" bug — the keep-alive's looping silent <audio> was what kept the
  * context alive). Bonus: media-element playback also obeys hardware volume keys.
  */
-export function playAudioBlobViaMediaElement(blob: Blob): { promise: Promise<void>; abort: () => void } {
-    return playAudioBlobElement(blob);
+export function playAudioBlobViaMediaElement(blob: Blob, reportErrors = false): { promise: Promise<void>; abort: () => void } {
+    return playAudioBlobElement(blob, reportErrors);
 }
 
-function playAudioBlobElement(blob: Blob): { promise: Promise<void>; abort: () => void } {
+function playAudioBlobElement(blob: Blob, reportErrors = false): { promise: Promise<void>; abort: () => void } {
     const url = URL.createObjectURL(blob);
     const audio = getSharedAudio();
     audio.muted = false;
@@ -370,13 +365,15 @@ function playAudioBlobElement(blob: Blob): { promise: Promise<void>; abort: () =
         try { audio.pause(); audio.removeAttribute("src"); audio.load(); } catch {}
         resolveFn();
     };
-    const promise = new Promise<void>((resolve) => {
+    const promise = new Promise<void>((resolve, reject) => {
         resolveFn = resolve;
-        audio.onended = finalize;
-        audio.onerror = finalize;
-        audio.play().catch(() => {
+        const fail = (message: string) => {
+            if (reportErrors) { resolveFn = () => reject(new Error(message)); }
             finalize();
-        });
+        };
+        audio.onended = finalize;
+        audio.onerror = () => fail("音频解码或加载失败，请检查语音服务返回的数据");
+        audio.play().catch(() => fail("浏览器未允许播放，请再次点击试听"));
     });
     return { promise, abort: finalize };
 }
