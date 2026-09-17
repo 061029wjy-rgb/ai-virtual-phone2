@@ -118,6 +118,15 @@
 
 /* ── Phone screen ── */
 
+/* Fixed modals extend outside the isolated screen. Do not paint decorative
+   case buttons above their backdrop (the frame's ::after paints after it). */
+.phone-case:has(.modal-overlay)::before,
+.phone-case:has(.modal-overlay)::after,
+.phone-frame:has(.modal-overlay)::before,
+.phone-frame:has(.modal-overlay)::after {
+  display: none;
+}
+
 .phone-shell {
   position: relative;
   width: var(--phone-screen-width);

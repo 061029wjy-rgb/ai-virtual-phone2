@@ -224,6 +224,22 @@ await test('Vertex 全局地址、Express Key、参数拦截和失败信息不�
     assert.equal(denied.status, 403);
 });
 
+await test('Vertex 区分鉴权与模型上游 504，保留状态且不返回 HTML 或凭据', async () => {
+    const secretHtml = '<HTML>Inactivity Timeout PRIVATE KEY fake-secret</HTML>';
+    const upstream504 = async () => new Response(secretHtml, {status: 504});
+    await assert.rejects(vertexAccessToken({...serviceAccount, client_email:'timeout@example.com'}, new AbortController().signal, upstream504), error => {
+        assert.equal(error.status, 504); assert.equal(error.code, 'vertex_oauth_upstream_504');
+        assert.match(error.message, /鉴权.*秒/); assert.ok(!error.message.includes('PRIVATE')); return true;
+    });
+    const query = new URLSearchParams({mode:'full', project:'test-project', location:'global', model:'gemini-3.8-flash'});
+    await assert.rejects(sendVertexRequest(query, {serviceAccount, request:{}}, new AbortController().signal, async url => url.includes('oauth2') ? Response.json({access_token:'fake-token',expires_in:3600}) : upstream504()), error => {
+        assert.equal(error.status,504); assert.equal(error.code,'vertex_model_upstream_504');
+        assert.match(error.message,/模型.*秒/); assert.ok(!error.message.includes('<HTML>')); return true;
+    });
+    const timedOut = new AbortController(); timedOut.abort(new DOMException('deadline','TimeoutError'));
+    await assert.rejects(sendVertexRequest(new URLSearchParams({mode:'express',model:'gemini-3.8-flash'}),{apiKey:'fake-secret',request:{}},timedOut.signal,async()=>{throw timedOut.signal.reason;}), error => error.status === 504 && error.code === 'vertex_model_timeout');
+});
+
 await test('Vertex 未导入账号与 JSON 格式错误分别提示，并接受 BOM', async () => {
     const { parseVertexServiceAccount } = await import('../lib/vertex-config.ts');
     assert.throws(() => parseVertexServiceAccount('  '), /尚未导入服务账号/);
@@ -367,6 +383,24 @@ await test('Vertex 保活保持 SSE 字节内容，取消会中止上游，截�
     const gateway=await unwrapModelResponse(new Response('<HTML>Inactivity Timeout</HTML>',{status:504}));
     assert.equal(gateway.status,504);assert.ok(!(await gateway.text()).includes('<HTML>'));
 });
+await test('工具诊断执行两轮非流式请求，保留签名，不执行外部动作且不吞掉 504', async () => {
+    const {testModelTools} = await import('../lib/model-tool-test.ts');
+    const config={id:'probe',provider:'VertexAI',protocol:'vertex',vertexMode:'express',apiKey:'fake',defaultModel:'gemini-3.8-flash'};
+    let calls=0;
+    const result=await testModelTools(config,async payload=>{
+        assert.equal(new URL(payload.url,'http://local').searchParams.get('stream'),'false');
+        calls++;
+        if(calls===1) return Response.json({candidates:[{content:{parts:[{thoughtSignature:'probe-signature',functionCall:{id:'probe-id',name:'phone_connection_probe',args:{}}}]}}]});
+        assert.match(JSON.stringify(payload.body),/probe-signature/);
+        assert.match(JSON.stringify(payload.body),/functionResponse/);
+        assert.match(JSON.stringify(payload.body),/PHONE_TOOL_OK/);
+        return Response.json({candidates:[{content:{parts:[{text:'PHONE_TOOL_OK'}]}}]});
+    });
+    assert.equal(calls,2);assert.match(result,/工具测试成功/);
+    await assert.rejects(testModelTools(config,async()=>Response.json({error:{message:'upstream timeout'}},{status:504})),/API Tool Error 504/);
+    await assert.rejects(testModelTools(config,async()=>Response.json({candidates:[{content:{parts:[{text:'hello'}]}}]})),/工具链尚未验证/);
+});
+
 await test('表情包结尾保持为 Gemini 正文，不凭空产生工具调用', async () => {
     const text='晚安[表情包:小猫挥手]';
     const result=parseProviderResponse('gemini',{candidates:[{content:{parts:[{text}]},finishReason:'STOP'}]});

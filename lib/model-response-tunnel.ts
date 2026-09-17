@@ -41,7 +41,10 @@ export function keepAliveModelResponse(run: (signal: AbortSignal) => Promise<Res
 
 export async function unwrapModelResponse(response: Response): Promise<Response> {
     if (response.headers.get("x-phone-response-tunnel") !== "1") {
-        if (response.status === 504) return new Response(JSON.stringify({ error: { message: "模型请求等待超时（504）。可能是模型响应慢、服务端网络或部署平台时限；请稍后重试，或减少上下文与输出长度。" } }), { status: 504, headers: { "Content-Type": "application/json" } });
+        if (response.status === 504) {
+            void response.body?.cancel().catch(() => undefined);
+            return Response.json({ error: { code: "vertex_relay_unframed_504", message: "Vertex 入口返回 504，未收到保活协议响应。请核对部署版本、托管平台时限及中间代理；仅凭此错误不能确认 Google 是否已收到请求。" } }, { status: 504 });
+        }
         return response;
     }
     const reader = response.body?.getReader();

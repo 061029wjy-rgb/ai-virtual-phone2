@@ -17,7 +17,7 @@ export async function POST(request: Request) {
             } });
         } catch (error) {
             const timeout = error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name);
-            return Response.json({ error: { message: error instanceof VertexError ? error.message : timeout ? "Vertex 请求超时或已取消" : "Vertex 连接失败，请检查服务器到 Google 的网络连接" } }, { status: error instanceof VertexError ? error.status : timeout ? 504 : 502, headers: { "Cache-Control": "no-store" } });
+            return Response.json({ error: { code: error instanceof VertexError ? error.code : undefined, message: error instanceof VertexError ? error.message : timeout ? "Vertex 请求超时或已取消" : "Vertex 连接失败，请检查服务器到 Google 的网络连接" } }, { status: error instanceof VertexError ? error.status : timeout ? 504 : 502, headers: { "Cache-Control": "no-store" } });
         }
     };
     return request.headers.get("x-phone-stream") === "1"

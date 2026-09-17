@@ -166,7 +166,7 @@ export function ApiSettings() {
         }
     };
 
-    const testConnection = async (config: ApiConfig) => {
+    const testConnection = async (config: ApiConfig, nativeTools = false) => {
         if (!config.defaultModel) {
             setTestResult(prev => ({ ...prev, [config.id]: { success: false, message: "请先输入或选择默认模型" } }));
             return;
@@ -176,6 +176,12 @@ export function ApiSettings() {
         setTestResult(prev => ({ ...prev, [config.id]: { success: false, message: "" } }));
 
         try {
+            if (nativeTools) {
+                const { testModelTools } = await import("@/lib/model-tool-test");
+                const message = await testModelTools(config);
+                setTestResult(prev => ({ ...prev, [config.id]: { success: true, message } }));
+                return;
+            }
             // 向量模型配置：测 /embeddings 端点。原来一律测 /chat/completions，
             // 导致 embedding 配置永远 404「测试失败」。
             if (isEmbeddingModelName(config.defaultModel)) {
@@ -451,6 +457,12 @@ export function ApiSettings() {
                                                 {isTesting[config.id] ? "测试中..." : "测试连接"}
                                             </button>
                                         </div>
+
+                                        {isVertexConfig(config) && (
+                                            <button className="ui-btn ui-btn-soft-action" disabled={isTesting[config.id]} onClick={() => testConnection(config, true)}>
+                                                测试工具调用（两次请求）
+                                            </button>
+                                        )}
 
                                         {testResult[config.id] && testResult[config.id].message && (
                                             <Alert variant={testResult[config.id].success ? "success" : "danger"}>

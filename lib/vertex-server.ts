@@ -5,7 +5,25 @@ import { parseVertexServiceAccount, type VertexServiceAccount } from "./vertex-c
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const tokens = new Map<string, { token: string; expires: number }>();
 export class VertexError extends Error {
-    constructor(message: string, public status = 400) { super(message); }
+    constructor(message: string, public status = 400, public code?: string) { super(message); }
+}
+
+async function fetchVertexStage(stage: "oauth" | "model", url: string, init: RequestInit, fetcher: typeof proxyFetch): Promise<Response> {
+    const started = Date.now();
+    const label = stage === "oauth" ? "Google 鉴权" : "Google 模型";
+    let response: Response;
+    try { response = await fetcher(url, init); }
+    catch (error) {
+        if (init.signal?.aborted && init.signal.reason?.name === "AbortError") throw error;
+        const timedOut = init.signal?.reason?.name === "TimeoutError" || (error instanceof Error && error.name === "TimeoutError");
+        throw new VertexError(`${label}阶段${timedOut ? "等待超时" : "连接失败"}（${Math.round((Date.now() - started) / 1000)}秒）。请检查部署服务器到 Google 的网络与代理。`, timedOut ? 504 : 502, `vertex_${stage}_${timedOut ? "timeout" : "network"}`);
+    }
+    if (response.status === 504 || (stage === "oauth" && response.status >= 500)) {
+        // Do not echo upstream HTML, URLs with keys, or OAuth response bodies.
+        void response.body?.cancel().catch(() => undefined);
+        throw new VertexError(`${label}上游返回 HTTP ${response.status}（${Math.round((Date.now() - started) / 1000)}秒）。错误来自服务器到 Google 的请求链路，请检查上游服务或出网代理；浏览器侧保活无法消除这一段超时。`, response.status, `vertex_${stage}_upstream_${response.status}`);
+    }
+    return response;
 }
 
 export async function vertexAccessToken(account: VertexServiceAccount, signal: AbortSignal, fetcher = proxyFetch): Promise<string> {
@@ -18,10 +36,10 @@ export async function vertexAccessToken(account: VertexServiceAccount, signal: A
     let signature: string;
     try { signature = createSign("RSA-SHA256").update(input).sign(account.private_key, "base64url"); }
     catch { throw new VertexError("服务账号私钥无效，请重新导入原始 JSON 文件"); }
-    const response = await fetcher(TOKEN_URL, {
+    const response = await fetchVertexStage("oauth", TOKEN_URL, {
         method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, redirect: "error", signal,
         body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: `${input}.${signature}` }),
-    });
+    }, fetcher);
     const result = await response.json().catch(() => ({}));
     if (!response.ok || typeof result.access_token !== "string") {
         throw new VertexError("Google 服务账号鉴权失败，请检查密钥是否有效、账号是否启用以及服务器时间", 401);
@@ -55,5 +73,5 @@ export async function sendVertexRequest(query: URLSearchParams, input: Record<st
         if (typeof input.apiKey !== "string" || !input.apiKey.trim()) throw new VertexError("Vertex Express 需要 API Key");
         url.searchParams.set("key", input.apiKey.trim());
     }
-    return fetcher(url.href, { method: "POST", headers, body: JSON.stringify(input.request), signal, redirect: "error" });
+    return fetchVertexStage("model", url.href, { method: "POST", headers, body: JSON.stringify(input.request), signal, redirect: "error" }, fetcher);
 }
