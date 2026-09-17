@@ -61,7 +61,9 @@ Vertex 鉴权参照 [SillyTavern 实现](https://github.com/SillyTavern/SillyTav
 
 ### Vertex 504 / Inactivity Timeout
 
-完整模式的请求由本站服务器转发。兼容版在等待 Google 鉴权、完整回复或流式分片时向浏览器发送内部保活数据，避免整个等待期没有响应字节；浏览器还原原始 HTTP 状态、JSON / SSE 内容，不将保活写入聊天，也不自动重试工具动作。旧客户端仍可使用原始接口。
+完整模式的请求由本站服务器转发。默认使用原始 JSON / SSE 转发，不额外包裹内部保活协议；原生流式输出仍可使用。此前版本对新客户端强制开启内部保活，尚未充分验证部署适配器对长响应的支持。出现“模型连接提前中断”时，只能确认内部协议未接收完整，不能直接归因为平台超时。
+
+仅在部署环境验证长响应兼容性后，才可设置服务端环境变量 `VERTEX_RESPONSE_TUNNEL=true` 开启实验性保活。关闭或删除该变量后重新部署即可恢复普通转发，已有支持保活的客户端也兼容；无需重填服务账号。保活与普通转发均不自动重试生成或工具动作。
 
 保活不能突破部署平台的最长执行时间，也不能修复 Google 或服务器出网链路自身的超时。Netlify 的具体时限见[官方函数配置说明](https://docs.netlify.com/build/functions/configuration/)，Vercel 见[函数运行时间说明](https://vercel.com/docs/functions/configuring-functions/duration)。仍超时时应结合部署日志判断是平台强制终止还是上游异常。
 

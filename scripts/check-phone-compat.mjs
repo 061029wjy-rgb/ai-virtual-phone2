@@ -349,6 +349,45 @@ await test('Vertex 导入修复 JSON 误填项目，保留有效覆盖值，发�
     assert.ok(!url.includes('PRIVATE'));
 });
 
+await test('Vertex 默认直传兼容旧保活客户端，延迟 JSON/SSE 不改写；保活需服务端显式开启', async () => {
+    const { POST } = await import('../app/api/vertex/route.ts');
+    const { unwrapModelResponse } = await import('../lib/model-response-tunnel.ts');
+    const previousFetch = globalThis.fetch;
+    const previousTunnel = process.env.VERTEX_RESPONSE_TUNNEL;
+    const makeRequest = (stream = false) => new Request(`https://phone.test/api/vertex?mode=express&model=gemini-test&stream=${stream}`, {method:'POST',headers:{origin:'https://phone.test','content-type':'application/json','x-phone-stream':'1'},body:JSON.stringify({apiKey:'fake',request:{contents:[]}})});
+    try {
+        delete process.env.VERTEX_RESPONSE_TUNNEL;
+        for (const stream of [false,true]) {
+            const contentType = stream ? 'text/event-stream' : 'application/json';
+            const content = stream ? 'data: {"text":"你好"}\n\n' : JSON.stringify({candidates:[{content:{parts:[{text:'你好'}]}}]});
+            let calls=0;
+            globalThis.fetch = async url => {
+                calls++; assert.equal(new URL(url).hostname,'aiplatform.googleapis.com');
+                await new Promise(resolve=>setTimeout(resolve,30));
+                return new Response(new ReadableStream({start(controller){setTimeout(()=>{controller.enqueue(new TextEncoder().encode(content));controller.close();},20);}}),{headers:{'content-type':contentType}});
+            };
+            const response = await POST(makeRequest(stream));
+            assert.equal(response.headers.get('x-phone-response-tunnel'),null);
+            const restored = await unwrapModelResponse(response);
+            assert.equal(restored.headers.get('content-type'),contentType);
+            assert.equal(await restored.text(),content);assert.equal(calls,1);
+        }
+        globalThis.fetch = async()=>new Response('<HTML>timeout</HTML>',{status:504});
+        const failure=await unwrapModelResponse(await POST(makeRequest()));
+        assert.equal(failure.status,504);assert.equal((await failure.json()).error.code,'vertex_model_upstream_504');
+        process.env.VERTEX_RESPONSE_TUNNEL='true';
+        globalThis.fetch=async()=>Response.json({ok:true});
+        const tunneled=await POST(makeRequest());
+        assert.equal(tunneled.headers.get('x-phone-response-tunnel'),'1');
+        assert.deepEqual(await (await unwrapModelResponse(tunneled)).json(),{ok:true});
+        await assert.rejects(unwrapModelResponse(new Response('\n\n',{headers:{'x-phone-response-tunnel':'1'}})),/提前中断.*未收到上游状态/);
+    } finally {
+        globalThis.fetch=previousFetch;
+        if(previousTunnel===undefined) delete process.env.VERTEX_RESPONSE_TUNNEL;
+        else process.env.VERTEX_RESPONSE_TUNNEL=previousTunnel;
+    }
+});
+
 await test('Vertex 等待上游时立即发送保活，非流式状态和中文表情完整还原', async () => {
     const { keepAliveModelResponse, unwrapModelResponse } = await import('../lib/model-response-tunnel.ts');
     let release;

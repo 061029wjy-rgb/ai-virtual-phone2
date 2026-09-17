@@ -41,9 +41,9 @@ export function keepAliveModelResponse(run: (signal: AbortSignal) => Promise<Res
 
 export async function unwrapModelResponse(response: Response): Promise<Response> {
     if (response.headers.get("x-phone-response-tunnel") !== "1") {
-        if (response.status === 504) {
+        if (response.status === 504 && !response.headers.get("content-type")?.includes("application/json")) {
             void response.body?.cancel().catch(() => undefined);
-            return Response.json({ error: { code: "vertex_relay_unframed_504", message: "Vertex 入口返回 504，未收到保活协议响应。请核对部署版本、托管平台时限及中间代理；仅凭此错误不能确认 Google 是否已收到请求。" } }, { status: 504 });
+            return Response.json({ error: { code: "vertex_relay_unframed_504", message: "Vertex 请求链路返回 504。请结合部署日志检查上游、托管平台和代理；仅凭此错误不能确认 Google 是否已收到请求。" } }, { status: 504 });
         }
         return response;
     }
@@ -51,6 +51,9 @@ export async function unwrapModelResponse(response: Response): Promise<Response>
     if (!reader) throw new Error("模型转发响应为空");
     const decoder = new TextDecoder();
     let buffer = "";
+    const started = Date.now();
+    let receivedBytes = 0;
+    let receivedHead = false;
     const next = async (): Promise<any> => {
         while (true) {
             const boundary = buffer.indexOf("\n");
@@ -60,7 +63,8 @@ export async function unwrapModelResponse(response: Response): Promise<Response>
                 continue;
             }
             const chunk = await reader.read();
-            if (chunk.done) throw new Error("模型连接提前中断，请检查部署平台超时限制后重试");
+            if (chunk.done) throw new Error(`模型保活连接提前中断（${Math.round((Date.now() - started) / 1000)}秒，收到 ${receivedBytes} 字节，${receivedHead ? "已收到上游状态" : "未收到上游状态"}）。未收到完整结束标记；可能是传输兼容性或连接被终止，请先关闭部署端 VERTEX_RESPONSE_TUNNEL 后重试。`);
+            receivedBytes += chunk.value.byteLength;
             buffer += decoder.decode(chunk.value, { stream: true });
         }
     };
@@ -68,6 +72,7 @@ export async function unwrapModelResponse(response: Response): Promise<Response>
         const head = await next();
         if (head.type === "error") throw new Error(head.message);
         if (head.type !== "head" || !Number.isInteger(head.status) || head.status < 200 || head.status > 599) throw new Error("模型转发响应格式错误");
+        receivedHead = true;
         const encoder = new TextEncoder();
         const body = new ReadableStream<Uint8Array>({
             async pull(controller) {

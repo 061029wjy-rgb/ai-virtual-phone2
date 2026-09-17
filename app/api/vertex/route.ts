@@ -20,7 +20,10 @@ export async function POST(request: Request) {
             return Response.json({ error: { code: error instanceof VertexError ? error.code : undefined, message: error instanceof VertexError ? error.message : timeout ? "Vertex 请求超时或已取消" : "Vertex 连接失败，请检查服务器到 Google 的网络连接" } }, { status: error instanceof VertexError ? error.status : timeout ? 504 : 502, headers: { "Cache-Control": "no-store" } });
         }
     };
-    return request.headers.get("x-phone-stream") === "1"
+    // The client header advertises decoding support, not deployment support.
+    // Early streaming can be cut off by hosting adapters even while heartbeats
+    // are flowing. Keep the original JSON/SSE relay as the safe default.
+    return process.env.VERTEX_RESPONSE_TUNNEL === "true" && request.headers.get("x-phone-stream") === "1"
         ? keepAliveModelResponse(execute, request.signal)
         : execute(request.signal);
 }
