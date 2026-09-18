@@ -1,4 +1,5 @@
 import { fetchLlmPayload } from "./llm-http";
+import { shouldFallbackToNonStreaming } from "./model-stream-fallback";
 // lib/mascot-engine.ts
 // 小卷 LLM 引擎：双协议（原生工具 + 文本协议），agent 循环由 UI 层驱动。
 
@@ -557,7 +558,7 @@ async function callMascotText(
         await displayFilter.flush();
         raw = streamResult.content.trim();
     } catch (streamError) {
-        if (options?.signal?.aborted) throw streamError;
+        if (options?.signal?.aborted || !shouldFallbackToNonStreaming(streamError)) throw streamError;
         await options?.callbacks?.onStreamFallback?.(formatErrorMessage(streamError));
 
         const request = buildProviderRequest(apiConfig, null, messages);
@@ -635,16 +636,11 @@ async function callMascotNative(
                 },
             );
         } catch (streamError) {
-            if (options?.signal?.aborted) throw streamError;
+            if (options?.signal?.aborted || !shouldFallbackToNonStreaming(streamError)) throw streamError;
             await options?.callbacks?.onStreamFallback?.(formatErrorMessage(streamError));
 
             const fallbackRequest = buildProviderRequest(apiConfig, null, messages, { tools });
-            const response = await fetch(fallbackRequest.url, {
-                method: "POST",
-                headers: fallbackRequest.headers,
-                body: JSON.stringify(fallbackRequest.body),
-                signal: options?.signal,
-            });
+            const response = await fetchLlmPayload(fallbackRequest, { signal: options?.signal });
             if (!response.ok) throw new Error(`API ${response.status}: ${await response.text()}`);
             const data = await response.json();
             const parsed = parseProviderResponse(fallbackRequest.providerKind, data);

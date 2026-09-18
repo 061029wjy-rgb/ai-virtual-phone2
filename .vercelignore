@@ -1,0 +1,21 @@
+# Local state and credentials must not be uploaded with preview deployments.
+.git
+.next
+.vercel
+node_modules
+.env*
+*.log
+*.tsbuildinfo
+.codex
+.claude
+.agents
+.idea
+.vscode
+.wx-media
+data/activation-codes.json
+tools/weixin-local-assistant/config.txt
+*.ts.net.crt
+*.ts.net.key
+SillyTavern
+应用市场草稿
+public/models/world-builder

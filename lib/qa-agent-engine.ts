@@ -10,6 +10,7 @@ import {
 } from "./llm-provider-adapter";
 import { sendLLMToolStreamRequest, type LLMToolRequestResult } from "./chat-engine";
 import { fetchLlmPayload } from "./llm-http";
+import { shouldFallbackToNonStreaming } from "./model-stream-fallback";
 import { pushApiLog } from "./api-log-store";
 import type { LLMContentPart } from "./llm-prompt-assembler";
 import { loadApiConfigs, loadBindingConfig } from "./settings-storage";
@@ -354,7 +355,7 @@ async function requestQaCompletion(
         logQaCall({ model: apiConfig.defaultModel, messages: streamRequest.messagesForLog, rawResponse: result.content, reasoning: result.reasoning });
         return result;
     } catch (streamError) {
-        if (options?.signal?.aborted) throw streamError;
+        if (options?.signal?.aborted || !shouldFallbackToNonStreaming(streamError)) throw streamError;
         await options?.callbacks?.onStreamFallback?.(formatQaErrorMessage(streamError));
         const request = buildProviderRequest(apiConfig, null, messages, { maxTokens });
         const response = await fetchLlmPayload(request, { signal: options?.signal });
@@ -725,7 +726,7 @@ async function callQaAgentNative(apiConfig: ApiConfig, history: QaEngineMessage[
                 },
             );
         } catch (streamError) {
-            if (options?.signal?.aborted) throw streamError;
+            if (options?.signal?.aborted || !shouldFallbackToNonStreaming(streamError)) throw streamError;
             await callbacks?.onStreamFallback?.(formatQaErrorMessage(streamError));
             const fallbackRequest = buildProviderRequest(apiConfig, null, messages, { tools, maxTokens: getQaMaxOutputTokens() ?? undefined });
             const response = await fetchLlmPayload(fallbackRequest, { signal: options?.signal });

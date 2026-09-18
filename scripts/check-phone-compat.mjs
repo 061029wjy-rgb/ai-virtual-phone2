@@ -153,6 +153,19 @@ await test('模型转发拒绝非授权地址和跨站请求，并保留流式�
 const { generateKeyPairSync, verify } = await import('node:crypto');
 const { sendVertexRequest, vertexAccessToken } = await import('../lib/vertex-server.ts');
 const { fetchLlmPayload } = await import('../lib/llm-http.ts');
+const { shouldFallbackToNonStreaming } = await import('../lib/model-stream-fallback.ts');
+await test('流式限流、鉴权和网关失败不立即重复生成；协议不兼容仍可降级', () => {
+    for (const status of [401, 403, 408, 429, 500, 502, 503, 504]) {
+        for (const prefix of ['API', 'API Stream', 'API Tool Stream Error']) {
+            assert.equal(shouldFallbackToNonStreaming(new Error(`${prefix} ${status}: failure`)), false);
+        }
+    }
+    assert.equal(shouldFallbackToNonStreaming(new DOMException('cancelled', 'AbortError')), false);
+    assert.equal(shouldFallbackToNonStreaming(new Error('Tool Stream Network Error connecting to AI Provider: 模型保活连接提前中断')), false);
+    assert.equal(shouldFallbackToNonStreaming(new Error('API Key 为空：provider=OpenAI')), false);
+    assert.equal(shouldFallbackToNonStreaming(new Error('API Stream 400: streaming unsupported')), true);
+    assert.equal(shouldFallbackToNonStreaming(new Error('API Stream 501: not implemented')), true);
+});
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const serviceAccount = { type: 'service_account', project_id: 'test-project', client_email: 'test@test-project.iam.gserviceaccount.com', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }), token_uri: 'https://untrusted.invalid/token' };
 const vertexConfig = { id: 'test-vertex', provider: 'VertexAI', protocol: 'vertex', apiKey: '', defaultModel: 'gemini-test', enableImageRecognition: true, enableImageGeneration: false, vertexServiceAccount: JSON.stringify(serviceAccount) };
@@ -380,6 +393,16 @@ await test('Vertex 默认直传兼容旧保活客户端，延迟 JSON/SSE 不改
         const tunneled=await POST(makeRequest());
         assert.equal(tunneled.headers.get('x-phone-response-tunnel'),'1');
         assert.deepEqual(await (await unwrapModelResponse(tunneled)).json(),{ok:true});
+        for (const tunnel of ['true', 'false']) {
+            process.env.VERTEX_RESPONSE_TUNNEL=tunnel;
+            let calls=0;
+            globalThis.fetch=async()=>{calls++;return Response.json({error:{code:429,status:'RESOURCE_EXHAUSTED',message:'capacity'}},{status:429,headers:{'retry-after':'17'}});};
+            const limited=await unwrapModelResponse(await POST(makeRequest()));
+            assert.equal(limited.status,429);
+            assert.equal(limited.headers.get('retry-after'),'17');
+            assert.equal((await limited.json()).error.status,'RESOURCE_EXHAUSTED');
+            assert.equal(calls,1);
+        }
         await assert.rejects(unwrapModelResponse(new Response('\n\n',{headers:{'x-phone-response-tunnel':'1'}})),/提前中断.*未收到上游状态/);
     } finally {
         globalThis.fetch=previousFetch;
@@ -444,6 +467,25 @@ await test('表情包结尾保持为 Gemini 正文，不凭空产生工具调用
     const text='晚安[表情包:小猫挥手]';
     const result=parseProviderResponse('gemini',{candidates:[{content:{parts:[{text}]},finishReason:'STOP'}]});
     assert.equal(result.content,text);assert.deepEqual(result.toolCalls,[]);
+});
+
+await test('Vertex 流式断连不得误报成功；结束标记、错误和取消均保留', async () => {
+    const {validateVertexStream}=await import('../lib/vertex-stream.ts');
+    const partial='data: {"candidates":[{"content":{"parts":[{"text":"你好🐱"}]}}]}\r\n\r\n';
+    const end='data: {"candidates":[{"finishReason":"STOP"}]}\r\n\r\n';
+    const bytes=new TextEncoder().encode(partial+end);
+    const source=new ReadableStream({start(c){for(const b of bytes)c.enqueue(Uint8Array.of(b));c.close();}});
+    assert.equal(await validateVertexStream(new Response(source)).text(),partial+end);
+    for(const text of [partial,partial+'data: {"candidates":[{"finishReason":"ST']) {
+        await assert.rejects(validateVertexStream(new Response(text)).text(),/未收到生成结束标记/);
+    }
+    await assert.rejects(validateVertexStream(new Response('data: {"error":{"code":429}}\n\n')).text(),/API Stream 429/);
+    const limited=Response.json({error:'limited'},{status:429});
+    assert.equal(validateVertexStream(limited),limited);
+    let cancelled=false;
+    const waiting=new ReadableStream({cancel(){cancelled=true;}});
+    await validateVertexStream(new Response(waiting)).body.cancel();
+    assert.equal(cancelled,true);
 });
 
 console.log(`\n${passed} compatibility checks passed (mock APIs; no paid requests).`);

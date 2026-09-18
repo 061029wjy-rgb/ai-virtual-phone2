@@ -13,7 +13,7 @@ export function keepAliveModelResponse(run: (signal: AbortSignal) => Promise<Res
                 let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
                 try {
                     const response = await run(AbortSignal.any([signal, abort.signal]));
-                    write({ type: "head", status: response.status, contentType: response.headers.get("content-type") });
+                    write({ type: "head", status: response.status, contentType: response.headers.get("content-type"), retryAfter: response.headers.get("retry-after") });
                     reader = response.body?.getReader();
                     const decoder = new TextDecoder();
                     if (reader) while (true) {
@@ -86,6 +86,6 @@ export async function unwrapModelResponse(response: Response): Promise<Response>
             cancel(reason) { return reader.cancel(reason); },
         });
         if ([204, 205, 304].includes(head.status)) { await reader.cancel(); return new Response(null, {status:head.status}); }
-        return new Response(body, { status: head.status, headers: { "Content-Type": head.contentType || "application/json" } });
+        return new Response(body, { status: head.status, headers: { "Content-Type": head.contentType || "application/json", ...(typeof head.retryAfter === "string" ? { "Retry-After": head.retryAfter } : {}) } });
     } catch (error) { await reader.cancel().catch(() => undefined); throw error; }
 }
