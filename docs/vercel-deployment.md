@@ -6,6 +6,8 @@
 
 ## 构建和发布
 
+`npm run build` 会先检查 CSS 引用的本地字体是否存在；缺失时停止构建，避免发布后字体全部 404。稀疏检出时，发布前至少执行 `git sparse-checkout add public/fonts`；其他页面图片和模型等资源也应按所需功能完整检出。
+
 `vercel.json` 使用 Next.js 框架和完整的 `npm run build` 命令，包含微信助手、个人推送分发包与 CSS 修复步骤。
 
 在 Vercel 的 Production 和 Preview 环境中设置 `NEXT_PUBLIC_SELF_HOSTED_MODE=true`。首次部署已设置；该开关仅控制应用自身的登录门禁，不包含模型密钥。
