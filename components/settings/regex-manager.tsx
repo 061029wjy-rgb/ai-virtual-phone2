@@ -8,7 +8,11 @@ import {
     createRegexGroup,
     parseRegexFromJson,
     UNSUPPORTED_IMPORT_FORMAT,
+    loadBindingConfig,
+    saveBindingConfig,
 } from "@/lib/settings-storage";
+import { bindDisplayFilterToAllChats } from "@/lib/regex-display-filter";
+import { DisplayFilterCreator } from "./display-filter-creator";
 import type { RegexConfig, RegexRule } from "@/lib/settings-types";
 import { testRegexRule } from "@/lib/llm-prompt-assembler";
 import { MacroEngine } from "@/lib/macro-engine";
@@ -209,6 +213,7 @@ export function RegexManager({ isActive = true }: { isActive?: boolean } = {}) {
     const [groupTestExpandStep, setGroupTestExpandStep] = useState<number | null>(null);
     const [importError, setImportError] = useState<string | null>(null);
     const [customApps, setCustomApps] = useState<InstalledCustomApp[]>([]);
+    const [displayFilterOpen, setDisplayFilterOpen] = useState(false);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -537,6 +542,14 @@ export function RegexManager({ isActive = true }: { isActive?: boolean } = {}) {
                 <>
                     <div className="flex items-center">
                         <h2 className="m-0 mx-2 ts-28 font-bold italic leading-none text-black">Regex</h2>
+                    </div>
+
+                    <div className="ui-entry-card flex flex-col gap-2">
+                        <span className="menu-label font-semibold">不想在 AI 回复里看到某些字词？</span>
+                        <p className="menu-desc !mt-0">直接填写字词或正则，只隐藏正文显示，不删除原消息。</p>
+                        <button type="button" className="ui-btn ui-btn-outline" onClick={() => setDisplayFilterOpen(true)}>
+                            <Plus size={16} /> 隐藏 AI 回复字词
+                        </button>
                     </div>
 
                     {groups.length === 0 ? (
@@ -1124,6 +1137,19 @@ export function RegexManager({ isActive = true }: { isActive?: boolean } = {}) {
                     onConfirm={() => setImportError(null)}
                     onCancel={() => setImportError(null)}
                 />
+            )}
+
+            {displayFilterOpen && (
+                <DisplayFilterCreator onClose={() => setDisplayFilterOpen(false)} onCreate={(name, rules) => {
+                    const group = createRegexGroup(name);
+                    group.description = "仅隐藏 AI 正文显示 · 可分别开关单聊、群聊和线下规则";
+                    group.rules = rules.map((rule, index) => ({ ...rule, id: `${group.id}-rule-${index}` }));
+                    persist([...loadRegexes(), group]);
+                    saveBindingConfig(bindDisplayFilterToAllChats(loadBindingConfig(), group.id));
+                    setActiveGroupId(group.id);
+                    setViewMode("detail");
+                    setDisplayFilterOpen(false);
+                }} />
             )}
 
             {addRuleMenuOpen && activeGroup && (

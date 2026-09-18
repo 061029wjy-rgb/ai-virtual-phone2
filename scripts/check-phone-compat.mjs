@@ -488,4 +488,61 @@ await test('Vertex 流式断连不得误报成功；结束标记、错误和取�
     assert.equal(cancelled,true);
 });
 
+const { createDisplayFilterRules, bindDisplayFilterToAllChats } = await import('../lib/regex-display-filter.ts');
+const { applyDisplayRegex, applyOutputRegex } = await import('../lib/llm-prompt-assembler.ts');
+const { resolveBinding, parseRegexFromJson } = await import('../lib/settings-storage.ts');
+const filterGroup = (input, mode = 'words') => ({ id: 'filter', name: '隐藏', createdAt: 0, updatedAt: 0, rules: createDisplayFilterRules(input, mode, 'rule') });
+await test('字词隐藏逐字匹配、长词优先、重复出现与特殊标点', () => {
+    const group = filterGroup('某词\n某词组\na.b\n[状态]\n/path/\n某词\n');
+    const text = '某词组某词 a.b axb [状态] /path/某词';
+    assert.equal(applyDisplayRegex(text, [group], 2, { activeTags: ['chat', 'text'] }), '  axb  ');
+    assert.throws(() => createDisplayFilterRules(' \n ', 'words', 'r'), /填写/);
+});
+await test('隐藏只在 AI 正文显示生效，不改用户消息、思考、存储输出和提示词', () => {
+    const group = filterGroup('秘密');
+    const original = '这是秘密';
+    for (const tags of [['chat','text'], ['chat','offline'], ['group_chat','text'], ['group_chat','offline']]) {
+        const ctx = { activeTags: tags };
+        assert.equal(applyDisplayRegex(original, [group], 2, ctx), '这是');
+        assert.equal(applyDisplayRegex(original, [group], 1, ctx), original);
+        assert.equal(applyDisplayRegex(original, [group], 6, ctx), original);
+        assert.equal(applyOutputRegex(original, [group], ctx), original);
+        assert.equal(applyOutputRegex(original, [group], { ...ctx, isPrompt: true }), original);
+    }
+    assert.equal(applyDisplayRegex(original, [group], 2, { activeTags: ['story'] }), original);
+    const disabled = { ...group, rules: group.rules.map(rule => ({ ...rule, disabled: true })) };
+    assert.equal(applyDisplayRegex(original, [disabled], 2, { activeTags: ['chat','text'] }), original);
+    const restored = parseRegexFromJson(JSON.stringify(group));
+    assert.equal(applyDisplayRegex(original, [restored], 2, { activeTags: ['chat','offline'] }), '这是');
+});
+await test('高级隐藏规则支持 flags、跨行和非法表达式校验', () => {
+    const ctx = { activeTags: ['chat','text'] };
+    assert.equal(applyDisplayRegex('FOO foo', [filterGroup('/foo/gi', 'regex')], 2, ctx), ' ');
+    assert.equal(applyDisplayRegex('foo foo', [filterGroup('/foo/', 'regex')], 2, ctx), ' foo');
+    assert.equal(applyDisplayRegex('a<hide>一\n二</hide>b', [filterGroup('/<hide>.*?<\\/hide>/gs', 'regex')], 2, ctx), 'ab');
+    assert.throws(() => filterGroup('/[bad/g', 'regex'), /无效/);
+    assert.throws(() => filterGroup('/foo/gg', 'regex'), /无效/);
+});
+await test('快捷隐藏自动追加绑定，保留已有覆盖、API 和继承关系', () => {
+    const original = {
+        globalDefaults: { regexIds: ['global'], apiConfigId: 'api' },
+        appDefaults: { chat: { regexIds: ['app'] } },
+        characterBindings: [
+            { characterId: 'alice', defaults: { regexIds: ['alice'] }, appOverrides: { chat: { regexIds: ['specific'], presetId: 'preset' } } },
+            { characterId: 'bob', defaults: {}, appOverrides: {} },
+        ],
+    };
+    const copy = structuredClone(original);
+    const next = bindDisplayFilterToAllChats(original, 'filter');
+    assert.deepEqual(original, copy);
+    assert.deepEqual(resolveBinding(next, 'alice', 'chat').regexIds, ['specific','filter']);
+    assert.deepEqual(resolveBinding(next, 'bob', 'chat').regexIds, ['app','filter']);
+    assert.deepEqual(resolveBinding(next, undefined, 'group_chat').regexIds, ['global','filter']);
+    assert.deepEqual(resolveBinding(next, 'alice', 'offline').regexIds, ['alice','filter']);
+    assert.equal(resolveBinding(next, 'alice', 'chat').apiConfigId, 'api');
+    assert.equal(resolveBinding(next, 'alice', 'chat').presetId, 'preset');
+    assert.deepEqual(next.characterBindings[1].defaults, {});
+    assert.deepEqual(bindDisplayFilterToAllChats(next, 'filter'), next);
+});
+
 console.log(`\n${passed} compatibility checks passed (mock APIs; no paid requests).`);
